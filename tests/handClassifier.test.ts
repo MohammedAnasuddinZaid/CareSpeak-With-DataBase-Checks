@@ -91,6 +91,18 @@ describe("handClassifier", () => {
     expect(r?.gesture).toBe("NO");
   });
 
+  it("detects NO with a loose, relaxed fist (regression)", () => {
+    // Real fists during thumbs-down hang slightly open (~ratio 0.95-1.05);
+    // the strict <0.95 curl gate used to reject them.
+    const h = makeHand({ thumbDown: true });
+    for (const [m, p, t] of [[5, 6, 8], [9, 10, 12], [13, 14, 16], [17, 18, 20]] as const) {
+      h.landmarks[p] = pt(h.landmarks[m].x, h.landmarks[m].y - 0.04);
+      h.landmarks[t] = pt(h.landmarks[m].x, h.landmarks[m].y - 0.039); // ratio ≈ 0.975
+    }
+    const r = classifyHandGesture([h]);
+    expect(r?.gesture).toBe("NO");
+  });
+
   it("detects index+pinky as HELP", () => {
     const r = classifyHandGesture([makeHand({ index: 1, pinky: 1 })]);
     expect(r?.gesture).toBe("HELP");

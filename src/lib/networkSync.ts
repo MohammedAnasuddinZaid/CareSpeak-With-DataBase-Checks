@@ -14,9 +14,13 @@ import {
 } from "./outbox";
 
 const BROADCAST_CHANNEL = "carespeak_sync";
-const POLL_INTERVAL_MS = 2500;
+const POLL_INTERVAL_MS = 1500;
 const MAX_POLL_INTERVAL_MS = 15000;
 const SSE_GRACE_MS = 6000;
+/** While SSE is connected we still reconcile via REST every 2s. Critical on
+ *  serverless (Vercel): /api/stream and /api/sync may run on different lambda
+ *  instances, so SSE alone can miss writes unless Upstash Redis is configured. */
+const RECONCILE_INTERVAL_MS = 2000;
 
 export type ConnStatus = "connected" | "reconnecting" | "disconnected";
 export type Transport = "sse" | "poll" | "offline" | "none";
@@ -31,6 +35,7 @@ export interface NetworkSyncConfig {
   onVitals?: (vitals: Record<string, DeviceVitals>) => void;
   onReply?: (reply: NurseReply) => void;
   onStatusChange?: (status: ConnStatus, transport: Transport) => void;
+  onDriver?: (driver: "memory" | "redis") => void;
 }
 
 /**
@@ -58,7 +63,9 @@ export class NetworkSync {
   private destroyed = false;
   private lastInboundAt = Date.now();
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
   private sseSilentStrikes = 0;
+  private driver: "memory" | "redis" | null = null;
 
   constructor(cfg: NetworkSyncConfig) {
     this.cfg = cfg;
@@ -88,6 +95,7 @@ export class NetworkSync {
     this.destroyed = true;
     this.closeSse();
     this.stopPolling();
+    this.stopReconciliation();
     if (this.retryTimer) clearTimeout(this.retryTimer);
     if (this.graceTimer) clearTimeout(this.graceTimer);
     if (this.watchdogTimer) clearInterval(this.watchdogTimer);
@@ -120,11 +128,19 @@ export class NetworkSync {
         this.sseSilentStrikes = 0;
         this.lastInboundAt = Date.now();
         this.setStatus("connected", "sse");
+        this.startReconciliation(); // REST safety-net while SSE is up
         void this.flushOutbox();
         if (this.graceTimer) clearTimeout(this.graceTimer);
       });
 
-      es.addEventListener("hello", () => {
+      es.addEventListener("hello", (ev) => {
+        try {
+          const data = JSON.parse((ev as MessageEvent).data) as { driver?: "memory" | "redis" };
+          if (data.driver && data.driver !== this.driver) {
+            this.driver = data.driver;
+            this.cfg.onDriver?.(data.driver);
+          }
+        } catch {}
         this.markInbound();
         this.setStatus("connected", "sse");
       });
@@ -205,6 +221,23 @@ export class NetworkSync {
       this.es.close();
       this.es = null;
     }
+    this.stopReconciliation();
+  }
+
+  /* ── reconciliation polling (REST safety-net while SSE is up) ── */
+
+  private startReconciliation(): void {
+    if (this.reconciliationTimer || this.destroyed) return;
+    this.reconciliationTimer = setInterval(() => {
+      if (!this.destroyed && this.es) void this.pollOnce();
+    }, RECONCILE_INTERVAL_MS);
+  }
+
+  private stopReconciliation(): void {
+    if (this.reconciliationTimer) {
+      clearInterval(this.reconciliationTimer);
+      this.reconciliationTimer = null;
+    }
   }
 
   /* ── poll fallback ─────────────────────────────────────── */
@@ -275,10 +308,15 @@ export class NetworkSync {
         vitals: Record<string, DeviceVitals>;
         replies: NurseReply[];
         serverTime: number;
+        driver?: "memory" | "redis";
       };
       this.failures = 0;
       this.pollInterval = POLL_INTERVAL_MS;
       this.markInbound();
+      if (data.driver && data.driver !== this.driver) {
+        this.driver = data.driver;
+        this.cfg.onDriver?.(data.driver);
+      }
       this.setStatus("connected", this.es ? "sse" : "poll");
       this.ingestEntries(data.entries ?? []);
       if (Object.keys(data.patientMetrics ?? {}).length > 0) this.cfg.onMetrics?.(data.patientMetrics);
@@ -394,6 +432,9 @@ export class NetworkSync {
   }
   getTransport(): Transport {
     return this.transport;
+  }
+  getDriver(): "memory" | "redis" | null {
+    return this.driver;
   }
 }
 

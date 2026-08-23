@@ -77,10 +77,19 @@ export class IrisCalibrator {
   private by = 0;
   private n = 0;
 
-  update(raw: { x: number; y: number }): void {
+  /**
+   * Outlier-gated update: frames whose offset is far from the current
+   * baseline are treated as deliberate gaze (or noise) and do NOT pull the
+   * neutral estimate — otherwise looking around at startup smears the
+   * baseline and every later glance fires a phantom gesture.
+   */
+  update(raw: { x: number; y: number }, maxDelta = 0.15): void {
+    const dx = raw.x - this.bx;
+    const dy = raw.y - this.by;
+    if (this.n >= 10 && Math.sqrt(dx * dx + dy * dy) > maxDelta) return;
     const k = this.n < 90 ? 0.12 : 0.006;
-    this.bx += k * (raw.x - this.bx);
-    this.by += k * (raw.y - this.by);
+    this.bx += k * dx;
+    this.by += k * dy;
     this.n++;
   }
 
@@ -115,7 +124,7 @@ export function classifyEyeGesture(faceLandmarks: Point[], opts: EyeClassifyOpti
   const mouthOpen = mouthOpenness(faceLandmarks);
 
   const BLINK_CLOSE_THRESHOLD = 0.22;
-  const GAZE_X_THRESHOLD = 0.05;
+  const GAZE_X_THRESHOLD = 0.04;
   const GAZE_Y_THRESHOLD = 0.05;
   const MOUTH_THRESHOLD = 0.11;
   /** iris offset magnitude that maps to full confidence (moderate looks pass 0.7) */
@@ -153,8 +162,8 @@ export class EyeGestureSmoother {
   /** per-instance blink hysteresis — was previously module-global and leaked between smoothers */
   private blinkHysteresisActive = false;
   private readonly DOUBLE_BLINK_WINDOW = 700;
-  private readonly SMOOTHING_FRAMES = 12;
-  private readonly HOLD_TIME_MS = 800;
+  private readonly SMOOTHING_FRAMES = 9;
+  private readonly HOLD_TIME_MS = 550;
   private readonly BLINK_COOLDOWN = 2000;
   private readonly HELP_LOCK_MS = 2000;
   private gazeStartTime = 0;

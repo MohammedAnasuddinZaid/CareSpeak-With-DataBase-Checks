@@ -26,6 +26,8 @@ export interface LiveSyncApi {
   syncRef: React.MutableRefObject<NetworkSync | null>;
   status: ConnStatus;
   transport: Transport;
+  /** Server-side store backend reported by the API: "memory" | "redis". */
+  driver: "memory" | "redis" | null;
   remoteMetrics: Record<string, PatientMetrics>;
   vitals: Record<string, DeviceVitals>;
   latestReply: NurseReply | null;
@@ -42,6 +44,7 @@ export function useLiveSync({ sessionId, enabled = true, onAlert }: UseLiveSyncO
 
   const [status, setStatus] = useState<ConnStatus>("disconnected");
   const [transport, setTransport] = useState<Transport>("none");
+  const [driver, setDriver] = useState<"memory" | "redis" | null>(null);
   const [remoteMetrics, setRemoteMetrics] = useState<Record<string, PatientMetrics>>({});
   const [vitals, setVitals] = useState<Record<string, DeviceVitals>>({});
   const [latestReply, setLatestReply] = useState<NurseReply | null>(null);
@@ -58,6 +61,7 @@ export function useLiveSync({ sessionId, enabled = true, onAlert }: UseLiveSyncO
       onMetrics: (m) => setRemoteMetrics((prev) => ({ ...prev, ...m })),
       onVitals: (v) => setVitals((prev) => ({ ...prev, ...v })),
       onReply: (r) => setLatestReply(r),
+      onDriver: (d) => setDriver(d),
       onStatusChange: (s, t) => {
         setStatus(s);
         setTransport(t);
@@ -103,5 +107,5 @@ export function useLiveSync({ sessionId, enabled = true, onAlert }: UseLiveSyncO
     []
   );
 
-  return { syncRef, status, transport, remoteMetrics, vitals, latestReply, sendAlert, sendAction, sendReply, sendPatientMetrics };
+  return { syncRef, status, transport, driver, remoteMetrics, vitals, latestReply, sendAlert, sendAction, sendReply, sendPatientMetrics };
 }

@@ -65,7 +65,7 @@ export default function NurseViewPage() {
     setLog((prev) => (prev.some((e) => e.id === entry.id) ? prev : [entry, ...prev]));
   }, []);
 
-  const { status, transport, remoteMetrics, vitals, sendAction, sendReply } = useLiveSync({
+  const { status, transport, driver, remoteMetrics, vitals, sendAction, sendReply } = useLiveSync({
     sessionId: sessionInput,
     enabled: paired,
     onAlert: handleAlert,
@@ -517,7 +517,8 @@ export default function NurseViewPage() {
               </h3>
               <div className="space-y-2">
                 {[
-                  { label: "Transport", value: transport === "sse" ? "Server-Sent Events (push)" : transport === "poll" ? "Adaptive polling" : transport === "offline" ? "Offline — queued" : "—", ok: status === "connected" },
+                  { label: "Transport", value: transport === "sse" ? "Server-Sent Events (push) + REST reconcile" : transport === "poll" ? "Adaptive polling" : transport === "offline" ? "Offline — queued" : "—", ok: status === "connected" },
+                  { label: "Data store", value: driver === "redis" ? "Upstash Redis (cross-instance)" : driver === "memory" ? "In-memory (single instance)" : "—", ok: driver === "redis" },
                   { label: "Patient camera", value: remoteMetrics && Object.keys(remoteMetrics).length > 0 ? "Streaming metrics" : "No metrics yet", ok: Object.keys(remoteMetrics).length > 0 },
                   { label: "IoT wearable", value: primaryVitals ? `Connected · ${primaryVitals.deviceId}` : "Not paired (optional)", ok: !!primaryVitals },
                   { label: "Privacy", value: "Video never leaves the patient device", ok: true },

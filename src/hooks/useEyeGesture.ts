@@ -156,7 +156,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     let faceLm: Point[] | null = null;
     if (hasFace) {
       faceLm = result.faceLandmarks[0].map((lm) => ({ x: lm.x, y: lm.y, z: lm.z ?? 0 }));
-      // Calibrate the neutral-gaze baseline every frame (fast lock-on, slow drift)
+      // Calibrate the neutral-gaze baseline from plausible-neutral frames only
       calibratorRef.current.update(computeAvgIrisOffset(faceLm, true));
       raw = classifyEyeGesture(faceLm, { mirrored: true, baseline: calibratorRef.current.value });
     }

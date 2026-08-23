@@ -50,14 +50,22 @@ function getThumbState(landmarks: Point[]): { extended: boolean; up: boolean; do
   const ipDist = dist(landmarks[THUMB_IP], landmarks[THUMB_MCP]);
   // 1.02 tolerates mild foreshortening when the thumb angles toward the camera
   const extended = ipDist > 0 && tipDist > ipDist * 1.02;
-  // Direction relative to PALM SIZE — absolute pixel deltas fail when the
-  // thumb points partly into/out of the screen (classic thumbs-down failure).
-  const dy = landmarks[THUMB_MCP].y - landmarks[THUMB_TIP].y;
-  const up = hs > 1e-6 && dy > hs * 0.28;
+
+  // Direction via 3D angle of the MCP->TIP vector against screen-vertical.
+  // Dividing by the vector's OWN length makes this immune to foreshortening —
+  // a thumb pointing at the camera-floor diagonal still scores cos ≈ 0.7,
+  // whereas absolute y-deltas collapse to noise in exactly that pose.
+  const vx = landmarks[THUMB_TIP].x - landmarks[THUMB_MCP].x;
+  const vy = landmarks[THUMB_TIP].y - landmarks[THUMB_MCP].y;
+  const vz = (landmarks[THUMB_TIP].z ?? 0) - (landmarks[THUMB_MCP].z ?? 0);
+  const len = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1e-6;
+  const cosUp = -vy / len; // y grows downward in image coords
+
+  const up = cosUp > 0.45;
+  // Down: steep downward angle OR thumb tip hanging clearly below the wrist
   const down =
-    hs > 1e-6 &&
-    (-dy > hs * 0.28 ||
-      landmarks[THUMB_TIP].y - landmarks[WRIST].y > hs * 0.55);
+    cosUp < -0.35 ||
+    (hs > 1e-6 && landmarks[THUMB_TIP].y - landmarks[WRIST].y > hs * 0.55);
   return { extended, up, down };
 }
 
@@ -116,7 +124,9 @@ export function classifyHandGesture(hands: HandData[]): HandClassification | nul
   const thumb = getThumbState(lm);
 
   const [idxRatio, midRatio, ringRatio, pinkyRatio] = ratios;
-  const allCurled = ratios.every((r) => r < 0.95);
+  // <1.05 (not just <0.95) accepts loose hanging fists — real thumbs-down
+  // poses often let fingers relax; open palms still fail this (>1.05).
+  const allCurled = ratios.every((r) => r < 1.05);
 
   if (thumb.extended && thumb.up && allCurled) {
     return { gesture: "YES", confidence: 0.9 };
