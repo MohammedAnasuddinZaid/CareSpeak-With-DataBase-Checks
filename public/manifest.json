@@ -1,16 +1,35 @@
 {
   "name": "CareSpeak AI — Giving Every Patient a Voice",
   "short_name": "CareSpeak",
-  "description": "AI-powered communication for patients who cannot speak or move easily. Use hand gestures, eye movements, or head gestures to express needs — instantly converted to speech.",
+  "description": "Assistive communication for patients who cannot speak or move easily. Hand gestures, eye movements and wearable vitals converted to speech and clinician alerts.",
   "start_url": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0f172a",
-  "theme_color": "#1e3a8a",
+  "background_color": "#f9f7f5",
+  "theme_color": "#c63a22",
   "categories": ["health", "medical", "communication", "accessibility"],
   "icons": [
-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
     { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Hand Mode",
+      "url": "/hand-mode",
+      "description": "Communicate with hand gestures"
+    },
+    {
+      "name": "Eye Mode",
+      "url": "/eye-mode",
+      "description": "Communicate with eye movements"
+    },
+    {
+      "name": "Emergency Alert",
+      "url": "/emergency",
+      "description": "Trigger an emergency alert instantly"
+    }
   ]
 }

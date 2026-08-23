@@ -2,20 +2,11 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle, AlertTriangle, ArrowUpCircle, ChevronDown, Bell } from "lucide-react";
-
-interface ActionEntry {
-  id: string;
-  gesture: string;
-  description: string;
-  timestamp: number;
-  acknowledged?: boolean;
-  escalated?: boolean;
-  resolved?: boolean;
-}
+import { CheckCircle, ArrowUpCircle, ChevronDown, Bell } from "lucide-react";
+import { GestureLogEntry } from "@/types";
 
 interface ClinicianActionsProps {
-  entries: ActionEntry[];
+  entries: GestureLogEntry[];
   onAcknowledge: (id: string) => void;
   onEscalate: (id: string) => void;
   onResolve: (id: string) => void;
@@ -24,8 +15,8 @@ interface ClinicianActionsProps {
 export default function ClinicianActions({ entries, onAcknowledge, onEscalate, onResolve }: ClinicianActionsProps) {
   const [expanded, setExpanded] = useState(false);
 
-  const unacknowledged = entries.filter((e) => !e.acknowledged && !e.resolved);
-  const displayEntries = expanded ? entries : unacknowledged.slice(0, 5);
+  const pending = entries.filter((e) => !e.resolved);
+  const displayEntries = expanded ? pending : pending.slice(0, 5);
 
   if (entries.length === 0) {
     return (
@@ -35,7 +26,7 @@ export default function ClinicianActions({ entries, onAcknowledge, onEscalate, o
           Clinician Actions
         </h3>
         <div className="flex items-center justify-center h-16 text-[#6e6e6e] text-sm">
-          No pending alerts
+          No actionable alerts
         </div>
       </div>
     );
@@ -48,9 +39,9 @@ export default function ClinicianActions({ entries, onAcknowledge, onEscalate, o
           <Bell className="w-4 h-4 text-[#c63a22]" />
           Clinician Actions
         </h3>
-        {unacknowledged.length > 0 && (
+        {pending.length > 0 && (
           <span className="px-2 py-0.5 rounded-full bg-[#fef2f2] text-[#d94a4a] text-[10px] font-bold border border-[#fecaca]">
-            {unacknowledged.length} pending
+            {pending.length} open
           </span>
         )}
       </div>
@@ -75,27 +66,31 @@ export default function ClinicianActions({ entries, onAcknowledge, onEscalate, o
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className={`text-sm font-bold ${
-                      entry.gesture === "HELP" ? "text-[#e8993e]" :
-                      entry.gesture === "EMERGENCY" ? "text-[#d94a4a]" : "text-[#1f1f1f]"
-                    }`}>
+                  <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                    <span
+                      className={`text-sm font-bold ${
+                        entry.gesture === "HELP"
+                          ? "text-[#e8993e]"
+                          : entry.gesture === "EMERGENCY"
+                          ? "text-[#d94a4a]"
+                          : "text-[#1f1f1f]"
+                      }`}
+                    >
                       {entry.gesture}
                     </span>
-                    {entry.escalated && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#fef2f2] text-[#d94a4a] font-bold border border-[#fecaca]">
-                        ESCALATED
+                    {entry.escalatedBy === "system" && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#fffbeb] text-[#e8993e] font-bold border border-[#fde68a]">
+                        AUTO · {entry.escalatedRule ?? ""}
                       </span>
                     )}
-                    {entry.resolved && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#ecfdf5] text-[#22a67e] font-bold border border-[#a7f3d0]">
-                        RESOLVED
-                      </span>
+                    {!entry.acknowledged && !entry.escalated && !entry.resolved && (
+                      <span className="w-2 h-2 rounded-full status-active animate-pulse" aria-label="pending" />
                     )}
                   </div>
                   <p className="text-xs text-[#6e6e6e] truncate">{entry.description}</p>
                   <p className="text-[10px] text-[#9ca3af] mt-0.5">
                     {new Date(entry.timestamp).toLocaleTimeString()}
+                    {entry.source === "iot" ? " · wearable" : ""}
                   </p>
                 </div>
               </div>
@@ -120,7 +115,7 @@ export default function ClinicianActions({ entries, onAcknowledge, onEscalate, o
                       Escalate
                     </button>
                   )}
-                  {(entry.acknowledged || entry.escalated) && !entry.resolved && (
+                  {(entry.acknowledged || entry.escalated) && (
                     <button
                       onClick={() => onResolve(entry.id)}
                       className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[#ecfdf5] hover:bg-[#d1fae5] text-[#22a67e] text-xs font-medium transition-all"

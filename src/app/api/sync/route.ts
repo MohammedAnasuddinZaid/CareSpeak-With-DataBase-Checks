@@ -1,123 +1,136 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GestureLogEntry, PatientMetrics } from "@/types";
+import { getSessionStore } from "@/lib/server/store";
+import { AlertAction, DeviceVitals, GestureLogEntry, NurseReply, PatientMetrics } from "@/types";
 
-interface StoredEntry {
-  entry: GestureLogEntry;
-  acknowledged: boolean;
-  acknowledgedAt?: number;
-  escalated: boolean;
-  escalatedAt?: number;
-  resolved: boolean;
-  resolvedAt?: number;
+export const dynamic = "force-dynamic";
+
+const GESTURES = new Set(["YES", "NO", "HELP", "WATER", "HELLO", "EMERGENCY", "SYSTEM"]);
+
+function bad(error: string, status = 400) {
+  return NextResponse.json({ ok: false, error }, { status });
 }
 
-interface SyncState {
-  entries: StoredEntry[];
-  patientMetrics: Map<string, PatientMetrics>;
+function validSession(s: unknown): s is string {
+  return typeof s === "string" && /^[A-Z0-9_-]{3,32}$/.test(s);
 }
 
-let state: SyncState = {
-  entries: [],
-  patientMetrics: new Map(),
-};
-
-function warmState(): void {
-  const entries = state.entries;
-  const cutoff = Date.now() - 3600000;
-  state.entries = entries.filter((e) => e.entry.timestamp > cutoff);
+function sanitizeEntry(raw: unknown): GestureLogEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const e = raw as Partial<GestureLogEntry>;
+  if (typeof e.id !== "string" || e.id.length > 64) return null;
+  if (typeof e.gesture !== "string" || !GESTURES.has(e.gesture)) return null;
+  if (typeof e.confidence !== "number" || !isFinite(e.confidence) || e.confidence < 0 || e.confidence > 1) return null;
+  if (typeof e.timestamp !== "number" || !isFinite(e.timestamp)) return null;
+  return {
+    id: e.id,
+    gesture: e.gesture,
+    description: typeof e.description === "string" ? e.description.slice(0, 300) : "",
+    confidence: e.confidence,
+    type: e.type === "eye" ? "eye" : e.type === "system" ? "system" : "hand",
+    timestamp: Math.min(e.timestamp, Date.now() + 5000),
+    language: typeof e.language === "string" ? e.language.slice(0, 10) : "en-US",
+    source: e.source === "demo" || e.source === "iot" || e.source === "manual" ? e.source : "camera",
+    escalated: !!e.escalated,
+    escalatedBy: e.escalatedBy === "system" ? "system" : undefined,
+    sessionId: undefined,
+  };
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  warmState();
   const { searchParams } = new URL(request.url);
-  const since = parseInt(searchParams.get("since") || "0", 10);
-  const sessionId = searchParams.get("session") || undefined;
+  const session = searchParams.get("session");
+  if (!session || !validSession(session)) return bad("Invalid session");
 
-  let filtered = state.entries;
-  if (since > 0) {
-    filtered = filtered.filter((e) => e.entry.timestamp > since);
-  }
-  if (sessionId) {
-    filtered = filtered.filter((e) => e.entry.sessionId === sessionId);
-  }
+  const since = Number(searchParams.get("since") ?? "0");
+  const store = await getSessionStore();
+  const [entries, patientMetrics, vitals, replies] = await Promise.all([
+    store.getEntriesSince(session, isFinite(since) ? since : 0),
+    store.getMetrics(session),
+    store.getVitals(session),
+    store.getRepliesSince(session, isFinite(since) ? Math.max(since - 60000, 0) : 0),
+  ]);
 
-  const entries = filtered.map((s) => ({
-    ...s.entry,
-    acknowledged: s.acknowledged,
-    acknowledgedAt: s.acknowledgedAt,
-    escalated: s.escalated,
-    escalatedAt: s.escalatedAt,
-    resolved: s.resolved,
-    resolvedAt: s.resolvedAt,
-    isEscalated: s.escalated,
-  }));
+  return NextResponse.json(
+    { entries, patientMetrics, vitals, replies, serverTime: Date.now(), driver: store.driver },
+    { headers: { "Cache-Control": "no-store" } }
+  );
+}
 
-  const metrics: Record<string, PatientMetrics> = {};
-  state.patientMetrics.forEach((v, k) => {
-    metrics[k] = v;
-  });
-
-  return NextResponse.json({
-    entries,
-    patientMetrics: metrics,
-    serverTime: Date.now(),
-  });
+interface SyncBody {
+  type?: string;
+  sessionId?: string;
+  entry?: GestureLogEntry;
+  entryId?: string;
+  action?: AlertAction;
+  patientMetrics?: PatientMetrics;
+  reply?: NurseReply;
+  deviceId?: string;
+  vitals?: Omit<DeviceVitals, "receivedAt">;
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  warmState();
-  try {
-    const body = await request.json();
-    const { type, entry, entryId, action, patientMetrics } = body;
+  const body = (await request.json().catch(() => null)) as SyncBody | null;
+  if (!body || typeof body.type !== "string") return bad("Invalid request");
+  if (body.sessionId !== undefined && !validSession(body.sessionId)) return bad("Invalid session");
+  const session = body.sessionId ?? "default";
+  const store = await getSessionStore();
 
-    if (type === "new_gesture" && entry) {
-      state.entries.push({
-        entry: entry as GestureLogEntry,
-        acknowledged: false,
-        escalated: false,
-        resolved: false,
+  switch (body.type) {
+    case "new_gesture": {
+      const entry = sanitizeEntry(body.entry);
+      if (!entry) return bad("Invalid entry payload");
+      await store.appendEntry(session, entry);
+      return NextResponse.json({ ok: true, serverTime: Date.now() });
+    }
+    case "acknowledge":
+    case "escalate":
+    case "resolve": {
+      if (typeof body.entryId !== "string" || body.entryId.length === 0 || body.entryId.length > 64)
+        return bad("Invalid entryId");
+      await store.setStatus(session, body.entryId, body.type);
+      return NextResponse.json({ ok: true, serverTime: Date.now() });
+    }
+    case "metrics": {
+      const m = body.patientMetrics;
+      if (!m || typeof m !== "object") return bad("Invalid metrics");
+      const clean: PatientMetrics = {};
+      if (typeof m.blinkRate === "number") clean.blinkRate = m.blinkRate;
+      if (typeof m.alertnessScore === "number") clean.alertnessScore = Math.max(0, Math.min(100, m.alertnessScore));
+      if (typeof m.eyeClosureDuration === "number") clean.eyeClosureDuration = m.eyeClosureDuration;
+      if (typeof m.movementActivity === "number")
+        clean.movementActivity = Math.max(0, Math.min(1, m.movementActivity));
+      await store.setMetrics(session, (body.deviceId ?? "unknown").slice(0, 64), clean);
+      return NextResponse.json({ ok: true });
+    }
+    case "vitals": {
+      const v = body.vitals;
+      if (!v || typeof v.deviceId !== "string") return bad("Invalid vitals");
+      await store.setVitals(session, {
+        deviceId: v.deviceId.slice(0, 64),
+        heartRate: typeof v.heartRate === "number" ? v.heartRate : undefined,
+        spo2: typeof v.spo2 === "number" ? v.spo2 : undefined,
+        temperature: typeof v.temperature === "number" ? v.temperature : undefined,
+        sosActive: !!v.sosActive,
+        batteryPct: typeof v.batteryPct === "number" ? v.batteryPct : undefined,
+        rssi: typeof v.rssi === "number" ? v.rssi : undefined,
+        receivedAt: Date.now(),
       });
-      if (state.entries.length > 10000) {
-        state.entries = state.entries.slice(-10000);
-      }
-      return NextResponse.json({ ok: true, index: state.entries.length - 1 });
+      return NextResponse.json({ ok: true, serverTime: Date.now() });
     }
-
-    if (type === "acknowledge" && entryId) {
-      const found = state.entries.find((s) => s.entry.id === entryId);
-      if (found) {
-        found.acknowledged = true;
-        found.acknowledgedAt = action?.timestamp || Date.now();
-      }
-      return NextResponse.json({ ok: true });
+    case "reply": {
+      const r = body.reply;
+      if (!r || typeof r.text !== "string" || r.text.trim().length === 0 || r.text.length > 200)
+        return bad("Invalid reply");
+      await store.setReply(session, {
+        id: r.id?.slice(0, 64) ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        text: r.text.trim(),
+        lang: r.lang?.slice(0, 10) ?? "en-US",
+        from: r.from?.slice(0, 40) ?? "Nurse",
+        timestamp: Date.now(),
+      });
+      return NextResponse.json({ ok: true, serverTime: Date.now() });
     }
-
-    if (type === "escalate" && entryId) {
-      const found = state.entries.find((s) => s.entry.id === entryId);
-      if (found) {
-        found.escalated = true;
-        found.escalatedAt = action?.timestamp || Date.now();
-      }
-      return NextResponse.json({ ok: true });
-    }
-
-    if (type === "resolve" && entryId) {
-      const found = state.entries.find((s) => s.entry.id === entryId);
-      if (found) {
-        found.resolved = true;
-        found.resolvedAt = action?.timestamp || Date.now();
-      }
-      return NextResponse.json({ ok: true });
-    }
-
-    if (type === "metrics" && patientMetrics) {
-      const deviceId = body.deviceId || "unknown";
-      state.patientMetrics.set(deviceId, { ...patientMetrics, lastSeen: new Date().toISOString() });
-      return NextResponse.json({ ok: true });
-    }
-
-    return NextResponse.json({ ok: false, error: "Unknown type" }, { status: 400 });
-  } catch {
-    return NextResponse.json({ ok: false, error: "Invalid request" }, { status: 400 });
+    default:
+      return bad("Unknown type");
   }
 }

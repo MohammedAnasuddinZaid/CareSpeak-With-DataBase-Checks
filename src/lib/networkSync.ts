@@ -1,259 +1,351 @@
-import { GestureLogEntry, SyncMessage, PatientMetrics, AlertAction } from "@/types";
+import {
+  AlertAction,
+  DeviceVitals,
+  GestureLogEntry,
+  NurseReply,
+  PatientMetrics,
+} from "@/types";
+import {
+  enqueue,
+  enqueueMetricsLatestWins,
+  dequeueAll,
+  remove as removeOutboxItem,
+  OutboxPayload,
+} from "./outbox";
 
-const POLL_INTERVAL = 100;
-const MAX_RETRY_INTERVAL = 5000;
-const INITIAL_RETRY_BACKOFF = 500;
-const BROADCAST_CHANNEL = "carespeak_bystander";
+const BROADCAST_CHANNEL = "carespeak_sync";
+const POLL_INTERVAL_MS = 2500;
+const MAX_POLL_INTERVAL_MS = 15000;
+const SSE_GRACE_MS = 6000;
 
-type AlertCallback = (entry: GestureLogEntry) => void;
-type ActionCallback = (action: AlertAction, entryId: string) => void;
-type MetricsCallback = (metrics: Record<string, PatientMetrics>) => void;
-type StatusChangeCallback = (status: "connected" | "reconnecting" | "disconnected") => void;
+export type ConnStatus = "connected" | "reconnecting" | "disconnected";
+export type Transport = "sse" | "poll" | "offline" | "none";
 
-interface NetworkSyncConfig {
+type StoredEntry = GestureLogEntry & { status?: string };
+
+export interface NetworkSyncConfig {
   sessionId?: string;
-  serverUrl?: string;
-  onAlert?: AlertCallback;
-  onAction?: ActionCallback;
-  onMetrics?: MetricsCallback;
-  onStatusChange?: StatusChangeCallback;
+  onAlert?: (entry: GestureLogEntry) => void;
+  onStatusUpdate?: (entryId: string, status: NonNullable<StoredEntry["status"]>) => void;
+  onMetrics?: (metrics: Record<string, PatientMetrics>) => void;
+  onVitals?: (vitals: Record<string, DeviceVitals>) => void;
+  onReply?: (reply: NurseReply) => void;
+  onStatusChange?: (status: ConnStatus, transport: Transport) => void;
 }
 
+/**
+ * Real-time sync client.
+ *  - Primary:  Server-Sent Events (/api/stream) — one connection, instant push.
+ *  - Fallback: adaptive interval polling (2.5s -> 15s exponential backoff).
+ *  - Offline:  every outbound message is persisted to an IndexedDB outbox and
+ *              flushed automatically when connectivity returns.
+ */
 export class NetworkSync {
-  private config: NetworkSyncConfig;
+  private cfg: NetworkSyncConfig;
+  private es: EventSource | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastPollTime: number = 0;
-  private retryBackoff: number = INITIAL_RETRY_BACKOFF;
-  private consecutiveFailures: number = 0;
-  private broadcastChannel: BroadcastChannel | null = null;
-  private entries: GestureLogEntry[] = [];
-  private offlineQueue: GestureLogEntry[] = [];
-  private status: "connected" | "reconnecting" | "disconnected" = "disconnected";
+  private graceTimer: ReturnType<typeof setTimeout> | null = null;
+  private bc: BroadcastChannel | null = null;
+  private onlineHandler = () => void this.flushOutbox();
+  private seenIds = new Set<string>();
+  private knownStatus = new Map<string, string>();
+  private cursor = Date.now() - 60_000;
+  private pollInterval = POLL_INTERVAL_MS;
+  private failures = 0;
+  private status: ConnStatus = "disconnected";
+  private transport: Transport = "none";
+  private destroyed = false;
 
-  constructor(config: NetworkSyncConfig) {
-    this.config = config;
-    this.initBroadcast();
-  }
-
-  private initBroadcast(): void {
+  constructor(cfg: NetworkSyncConfig) {
+    this.cfg = cfg;
     try {
-      this.broadcastChannel = new BroadcastChannel(BROADCAST_CHANNEL);
-      this.broadcastChannel.onmessage = (event: MessageEvent<SyncMessage>) => {
-        this.handleSyncMessage(event.data);
-      };
+      this.bc = new BroadcastChannel(BROADCAST_CHANNEL);
+      this.bc.onmessage = (ev: MessageEvent) => this.onBroadcast(ev.data);
     } catch {
-      this.broadcastChannel = null;
+      this.bc = null;
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", this.onlineHandler);
+      if (navigator.onLine === false) this.setStatus("disconnected", "offline");
     }
   }
 
-  private handleSyncMessage(msg: SyncMessage): void {
-    if (msg.type === "new_gesture" && msg.entry) {
-      const exists = this.entries.some((e) => e.id === msg.entry!.id);
-      if (!exists) {
-        this.entries.push(msg.entry);
-        this.config.onAlert?.(msg.entry);
-      }
-    }
-    if (msg.type === "acknowledge" && msg.entryId) {
-      const entry = this.entries.find((e) => e.id === msg.entryId);
-      if (entry) {
-        entry.acknowledged = true;
-        this.config.onAction?.({ type: "acknowledge", entryId: msg.entryId, timestamp: Date.now() }, msg.entryId);
-      }
-    }
-    if (msg.type === "resolve" && msg.entryId) {
-      const entry = this.entries.find((e) => e.id === msg.entryId);
-      if (entry) {
-        entry.acknowledged = true;
-        entry.resolved = true;
-        this.config.onAction?.({ type: "resolve", entryId: msg.entryId, timestamp: Date.now() }, msg.entryId);
-      }
-    }
+  /* ── lifecycle ─────────────────────────────────────────── */
+
+  connect(): void {
+    if (this.destroyed) return;
+    this.cursor = Date.now() - 60_000;
+    void this.openSse();
   }
 
-  private getServerUrl(): string {
-    return this.config.serverUrl || (typeof window !== "undefined" ? `${window.location.origin}/api/sync` : "/api/sync");
-  }
-
-  async sendAlert(entry: GestureLogEntry): Promise<void> {
-    this.entries.push(entry);
+  destroy(): void {
+    this.destroyed = true;
+    this.closeSse();
+    this.stopPolling();
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    if (this.graceTimer) clearTimeout(this.graceTimer);
+    if (typeof window !== "undefined") window.removeEventListener("online", this.onlineHandler);
     try {
-      const res = await fetch(this.getServerUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "new_gesture",
-          entry: { ...entry, sessionId: this.config.sessionId },
-        }),
+      this.bc?.close();
+    } catch {}
+    this.bc = null;
+  }
+
+  /* ── inbound ───────────────────────────────────────────── */
+
+  private async openSse(): Promise<void> {
+    const session = this.cfg.sessionId ?? "default";
+    try {
+      const es = new EventSource(
+        `/api/stream?session=${encodeURIComponent(session)}&since=${this.cursor}`
+      );
+      this.es = es;
+
+      es.addEventListener("open", () => {
+        this.failures = 0;
+        this.pollInterval = POLL_INTERVAL_MS;
+        this.stopPolling();
+        this.setStatus("connected", "sse");
+        void this.flushOutbox();
+        if (this.graceTimer) clearTimeout(this.graceTimer);
       });
-      if (!res.ok) throw new Error("Server error");
-      this.offlineQueue = this.offlineQueue.filter((e) => e.id !== entry.id);
+
+      es.addEventListener("hello", () => this.setStatus("connected", "sse"));
+
+      es.addEventListener("entries", (ev) => {
+        try {
+          const entries = JSON.parse((ev as MessageEvent).data) as StoredEntry[];
+          this.ingestEntries(entries);
+        } catch {}
+      });
+
+      es.addEventListener("state", (ev) => {
+        try {
+          const data = JSON.parse((ev as MessageEvent).data) as {
+            patientMetrics: Record<string, PatientMetrics>;
+            vitals: Record<string, DeviceVitals>;
+            serverTime: number;
+          };
+          if (Object.keys(data.patientMetrics ?? {}).length > 0) this.cfg.onMetrics?.(data.patientMetrics);
+          if (Object.keys(data.vitals ?? {}).length > 0) this.cfg.onVitals?.(data.vitals);
+          this.setStatus("connected", "sse");
+        } catch {}
+      });
+
+      es.addEventListener("replies", (ev) => {
+        try {
+          const replies = JSON.parse((ev as MessageEvent).data) as NurseReply[];
+          for (const r of replies) this.cfg.onReply?.(r);
+        } catch {}
+      });
+
+      es.addEventListener("error", () => {
+        // EventSource retries internally; give it a short grace period,
+        // then degrade to polling so rural/2G networks still work.
+        if (this.graceTimer) clearTimeout(this.graceTimer);
+        this.graceTimer = setTimeout(() => {
+          if (this.transport === "sse" && this.status !== "connected") {
+            this.closeSse();
+            this.startPolling();
+          }
+        }, SSE_GRACE_MS);
+        this.setStatus(this.status === "disconnected" ? "disconnected" : "reconnecting", this.transport === "poll" ? "poll" : "sse");
+      });
     } catch {
-      this.offlineQueue.push(entry);
+      this.startPolling();
     }
-    this.sendLocal(entry);
   }
 
-  async sendAction(action: AlertAction): Promise<void> {
-    const typeMap: Record<string, string> = {
-      acknowledge: "acknowledge",
-      escalate: "escalate",
-      resolve: "resolve",
-    };
-    const type = typeMap[action.type];
-    if (!type) return;
-
-    try {
-      await fetch(this.getServerUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type,
-          entryId: action.entryId,
-          action,
-          sessionId: this.config.sessionId,
-        }),
-      });
-    } catch {}
-    this.sendLocal({ type, entryId: action.entryId, sessionId: this.config.sessionId } as unknown as GestureLogEntry);
+  private ingestEntries(entries: StoredEntry[]): void {
+    let newest = this.cursor;
+    for (const e of entries) {
+      const st = e.serverTime ?? e.timestamp;
+      if (st > newest) newest = st;
+      const prevStatus = this.knownStatus.get(e.id);
+      if (prevStatus && e.status && e.status !== prevStatus) {
+        this.cfg.onStatusUpdate?.(e.id, e.status as NonNullable<StoredEntry["status"]>);
+      }
+      this.knownStatus.set(e.id, e.status ?? "none");
+      if (!this.seenIds.has(e.id)) {
+        this.seenIds.add(e.id);
+        if (this.seenIds.size > 3000) {
+          // bound memory on long-running dashboards
+          for (const id of Array.from(this.seenIds).slice(0, 1000)) this.seenIds.delete(id);
+        }
+        this.cfg.onAlert?.(e);
+      } else if (e.status === "acknowledge" || e.status === "escalate" || e.status === "resolve") {
+        this.cfg.onStatusUpdate?.(e.id, e.status);
+      }
+    }
+    this.cursor = Math.max(this.cursor, newest);
   }
 
-  async sendPatientMetrics(metrics: PatientMetrics, deviceId: string): Promise<void> {
-    try {
-      await fetch(this.getServerUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "metrics",
-          patientMetrics: metrics,
-          deviceId,
-          sessionId: this.config.sessionId,
-        }),
-      });
-    } catch {}
+  private closeSse(): void {
+    if (this.es) {
+      this.es.close();
+      this.es = null;
+    }
   }
 
-  private sendLocal(msg: SyncMessage | GestureLogEntry): void {
-    const syncMsg: SyncMessage = "gesture" in msg
-      ? { type: "new_gesture", entry: msg as GestureLogEntry }
-      : msg as unknown as SyncMessage;
-    this.broadcastChannel?.postMessage(syncMsg);
-    this.saveToLocalStorage();
-  }
+  /* ── poll fallback ─────────────────────────────────────── */
 
-  private saveToLocalStorage(): void {
-    try {
-      const recent = this.entries.slice(-50);
-      localStorage.setItem("carespeak_gesture_log", JSON.stringify(recent));
-    } catch {}
-  }
-
-  private setStatus(status: "connected" | "reconnecting" | "disconnected"): void {
-    if (this.status === status) return;
-    this.status = status;
-    this.config.onStatusChange?.(status);
-  }
-
-  refresh(): void {
-    this.lastPollTime = 0;
-    this.consecutiveFailures = 0;
-    this.retryBackoff = INITIAL_RETRY_BACKOFF;
-    this.poll();
-  }
-
-  startPolling(): void {
-    if (this.pollTimer) return;
-    this.setStatus("connected");
-    this.poll();
-    this.pollTimer = setInterval(() => this.poll(), POLL_INTERVAL);
-  }
-
-  stopPolling(): void {
+  private stopPolling(): void {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
-    if (this.retryTimer) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = null;
-    }
   }
 
-  private scheduleRetry(): void {
-    this.stopPolling();
-    this.setStatus("reconnecting");
+  private startPolling(): void {
+    if (this.pollTimer || this.destroyed) return;
+    this.pollInterval = POLL_INTERVAL_MS;
+    this.schedulePoll();
+  }
+
+  private schedulePoll(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => {
-      this.retryTimer = null;
-      this.poll();
-      this.pollTimer = setInterval(() => this.poll(), POLL_INTERVAL);
-    }, this.retryBackoff);
+      void this.pollOnce().then(() => {
+        if (!this.pollTimer && !this.destroyed) this.pollTimer = setInterval(() => void this.pollOnce(), this.pollInterval);
+      });
+    }, 50);
   }
 
-  private async poll(): Promise<void> {
+  private async pollOnce(): Promise<void> {
+    if (this.destroyed) return;
     try {
-      const since = this.lastPollTime;
-      const url = `${this.getServerUrl()}?since=${since}${this.config.sessionId ? `&session=${this.config.sessionId}` : ""}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Poll failed: ${res.status}`);
-      const data = await res.json();
-
-      this.consecutiveFailures = 0;
-      this.retryBackoff = INITIAL_RETRY_BACKOFF;
-      this.setStatus("connected");
-
-      if (data.entries && data.entries.length > 0) {
-        const entries = data.entries as GestureLogEntry[];
-        let newMaxTs = this.lastPollTime;
-        for (const entry of entries) {
-          if (entry.timestamp > newMaxTs) newMaxTs = entry.timestamp;
-          const exists = this.entries.some((e) => e.id === entry.id);
-          if (!exists) {
-            this.entries.push(entry);
-            this.config.onAlert?.(entry);
-          }
-        }
-        this.lastPollTime = newMaxTs;
-      }
-
-      if (data.patientMetrics) {
-        this.config.onMetrics?.(data.patientMetrics);
-      }
+      const session = encodeURIComponent(this.cfg.sessionId ?? "default");      const res = await fetch(`/api/sync?session=${session}&since=${this.cursor}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as {
+        entries: StoredEntry[];
+        patientMetrics: Record<string, PatientMetrics>;
+        vitals: Record<string, DeviceVitals>;
+        replies: NurseReply[];
+        serverTime: number;
+      };
+      this.failures = 0;
+      this.pollInterval = POLL_INTERVAL_MS;
+      this.setStatus("connected", this.es ? "sse" : "poll");
+      this.ingestEntries(data.entries ?? []);
+      if (Object.keys(data.patientMetrics ?? {}).length > 0) this.cfg.onMetrics?.(data.patientMetrics);
+      if (Object.keys(data.vitals ?? {}).length > 0) this.cfg.onVitals?.(data.vitals);
+      for (const r of data.replies ?? []) this.cfg.onReply?.(r);
     } catch {
-      this.consecutiveFailures++;
-      this.retryBackoff = Math.min(this.retryBackoff * 2, MAX_RETRY_INTERVAL);
-      if (this.consecutiveFailures > 2) {
-        this.setStatus("disconnected");
+      this.failures++;
+      this.pollInterval = Math.min(this.pollInterval * 2, MAX_POLL_INTERVAL_MS);
+      if (this.pollTimer) {
+        clearInterval(this.pollTimer);
+        this.pollTimer = null;
       }
-      this.scheduleRetry();
+      this.setStatus(this.failures > 1 ? "reconnecting" : "connected", this.failures > 3 ? "offline" : "poll");
+      this.schedulePoll();
     }
   }
 
-  async flushOfflineQueue(): Promise<void> {
-    if (this.offlineQueue.length === 0) return;
-    const queue = [...this.offlineQueue];
-    this.offlineQueue = [];
-    for (const entry of queue) {
-      await this.sendAlert(entry);
-    }
-  }
+  /* ── outbound ──────────────────────────────────────────── */
 
-  getEntries(): GestureLogEntry[] {
-    return [...this.entries];
-  }
-
-  destroy(): void {
-    this.stopPolling();
+  async post(body: unknown): Promise<boolean> {
     try {
-      this.broadcastChannel?.close();
+      const res = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        cache: "no-store",
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Send a gesture alert. Queues durably when offline. */
+  async sendAlert(entry: GestureLogEntry): Promise<void> {
+    const body = { type: "new_gesture", entry: { ...entry, sessionId: undefined }, sessionId: this.cfg.sessionId };
+    const ok = await this.post(body);
+    if (!ok) await enqueue({ channel: "alert", body: { type: "new_gesture", entry: { ...entry } } });
+    else void this.flushOutbox();
+    this.broadcast({ kind: "new_gesture", entry, sessionId: this.cfg.sessionId });
+  }
+
+  async sendAction(action: AlertAction): Promise<void> {
+    const body = {
+      type: action.type,
+      entryId: action.entryId,
+      action,
+      sessionId: this.cfg.sessionId,
+    };
+    const ok = await this.post(body);
+    if (!ok) await enqueue({ channel: "action", body: { type: action.type, entryId: action.entryId, action } });
+    this.broadcast({ kind: "action", action, sessionId: this.cfg.sessionId });
+  }
+
+  async sendReply(reply: Omit<NurseReply, "timestamp">): Promise<void> {
+    await this.post({ type: "reply", reply, sessionId: this.cfg.sessionId });
+  }
+
+  async sendPatientMetrics(metrics: PatientMetrics, deviceId: string): Promise<void> {
+    const body = { type: "metrics", patientMetrics: metrics, deviceId, sessionId: this.cfg.sessionId };
+    const ok = await this.post(body);
+    if (!ok) await enqueueMetricsLatestWins({ channel: "metrics", body: { type: "metrics", patientMetrics: metrics, deviceId } });
+  }
+
+  async sendIoTVitals(vitals: Omit<DeviceVitals, "receivedAt">): Promise<void> {
+    await this.post({ type: "vitals", vitals, sessionId: this.cfg.sessionId });
+  }
+
+  async flushOutbox(): Promise<void> {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    const items = await dequeueAll();
+    for (const item of items) {
+      const payload: OutboxPayload = item.payload;
+      const ok = await this.post(payload.body);
+      if (ok) await removeOutboxItem(item.key);
+      else break; // still offline — retry on next trigger
+    }
+  }
+
+  /* ── local same-device tabs ────────────────────────────── */
+
+  private broadcast(msg: import("@/types").SyncMessage): void {
+    try {
+      this.bc?.postMessage(msg);
     } catch {}
-    this.entries = [];
-    this.offlineQueue = [];
+  }
+
+  private onBroadcast(msg: import("@/types").SyncMessage): void {
+    if (!msg || msg.sessionId !== this.cfg.sessionId) return;
+    if (msg.kind === "new_gesture" && !this.seenIds.has(msg.entry.id)) {
+      this.seenIds.add(msg.entry.id);
+      this.knownStatus.set(msg.entry.id, "none");
+      this.cfg.onAlert?.(msg.entry);
+    }
+    if (msg.kind === "action") {
+      this.knownStatus.set(msg.action.entryId, msg.action.type);
+      this.cfg.onStatusUpdate?.(msg.action.entryId, msg.action.type);
+    }
+    if (msg.kind === "reply") this.cfg.onReply?.(msg.reply);
+  }
+
+  /* ── status plumbing ───────────────────────────────────── */
+
+  private setStatus(status: ConnStatus, transport: Transport): void {
+    if (this.status === status && this.transport === transport) return;
+    this.status = status;
+    this.transport = transport;
+    this.cfg.onStatusChange?.(status, transport);
+  }
+
+  getStatus(): ConnStatus {
+    return this.status;
+  }
+  getTransport(): Transport {
+    return this.transport;
   }
 }
 
 export function createNetworkSync(config: NetworkSyncConfig): NetworkSync {
   const sync = new NetworkSync(config);
-  sync.startPolling();
+  sync.connect();
   return sync;
 }

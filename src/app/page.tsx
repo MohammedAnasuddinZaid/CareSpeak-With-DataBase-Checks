@@ -15,20 +15,21 @@ const stagger = {
 };
 
 const FEATURES = [
-  { icon: Hand, title: "Hand Gesture Recognition", desc: "Five distinct gestures — thumbs up, thumbs down, peace sign, open palm, and both hands — detected via on-device computer vision. Works in any lighting.", color: "#c63a22" },
-  { icon: Eye, title: "Eye Movement Tracking", desc: "Iris tracking and blink detection let patients communicate by gaze direction, double-blinks, and mouth gestures — no hand movement required.", color: "#22a67e" },
-  { icon: Volume2, title: "Instant Voice Alerts", desc: "Every gesture triggers a spoken alert in the patient's chosen language. Nurses hear the need without watching the screen.", color: "#e8993e" },
-  { icon: Camera, title: "CCTV Integration", desc: "Connect any IP camera or phone camera for remote patient monitoring. Full-screen kiosk mode with real-time gesture detection.", color: "#8b5cf6" },
-  { icon: Shield, title: "100% Private & Secure", desc: "All processing runs in-browser via WebAssembly. No video, no data, no images ever leave the device. No servers, no accounts, no tracking.", color: "#3b82f6" },
-  { icon: Zap, title: "Real-time, No Lag", desc: "Sub-100ms inference latency. Optimized for CPU-only devices. Gesture to speech in under half a second.", color: "#8b5cf6" },
-  { icon: Heart, title: "No Setup, No Cost", desc: "Open Chrome, grant camera access, and start communicating. No installation, no training, no expensive hardware.", color: "#c63a22" },
+  { icon: Hand, title: "Hand Gesture Recognition", desc: "Five distinct gestures — thumbs up, thumbs down, HELP, both-hands WATER, plus a one-handed palm hold for stroke patients. Detected fully on-device.", color: "#c63a22" },
+  { icon: Eye, title: "Eye Movement Tracking", desc: "Iris tracking, double-blink HELP and mouth gestures let completely paralyzed patients communicate — no hand movement required.", color: "#22a67e" },
+  { icon: Volume2, title: "Instant Voice Alerts", desc: "Every gesture is spoken aloud in one of 10 Indian languages — nurses hear the need without watching any screen.", color: "#e8993e" },
+  { icon: Users, title: "Two-Way Nurse Messaging", desc: "Nurses reply by typing or voice; patients see a full-screen banner and hear it instantly. Communication finally goes both ways.", color: "#8b5cf6" },
+  { icon: Activity, title: "Predictive Risk Engine", desc: "Live risk score from alertness, blink rate and HELP frequency. Rules auto-escalate critical patterns with a full audit trail.", color: "#dc2626" },
+  { icon: Shield, title: "100% Private by Design", desc: "MediaPipe WASM runs in your browser. No video, no images, no audio ever leave the patient device. CSP-hardened, session-isolated.", color: "#3b82f6" },
+  { icon: Zap, title: "Offline-First for Rural India", desc: "AI models cached on first load; every alert queued in IndexedDB and auto-flushed when connectivity returns. Built for real hospital networks.", color: "#0ea5e9" },
+  { icon: Heart, title: "IoT Wearable Ready", desc: "A ₹1,100 ESP32 wristband streams heart rate & SpO₂ and carries a physical SOS button — wired straight into the same dashboard.", color: "#c63a22" },
 ];
 
 const STATS = [
   { value: "478", label: "Face landmarks tracked per frame", icon: Eye },
-  { value: "21", label: "Hand landmarks tracked per hand", icon: Hand },
-  { value: "8", label: "Supported languages", icon: Volume2 },
-  { value: "30+", label: "Frames per second", icon: Zap },
+  { value: "10", label: "Indian languages supported", icon: Volume2 },
+  { value: "<1s", label: "Gesture to nurse console latency", icon: Zap },
+  { value: "₹0", label: "Software cost — works on any laptop", icon: Heart },
 ];
 
 function SectionHeading({ label, title, subtitle }: { label?: string; title: string; subtitle?: string }) {
@@ -145,7 +146,7 @@ export default function LandingPage() {
             transition={{ duration: 0.5, delay: 0.5 }}
             className="mt-12 flex flex-wrap items-center justify-center gap-6 text-sm text-white/60"
           >
-            {["Works in Chrome", "No server required", "100% private"].map((text, i) => (
+            {["100% on-device AI", "Works offline", "10 Indian languages"].map((text, i) => (
               <span key={i} className="flex items-center gap-1.5">
                 <CheckCircle className="w-4 h-4 text-[#22a67e]" />
                 {text}

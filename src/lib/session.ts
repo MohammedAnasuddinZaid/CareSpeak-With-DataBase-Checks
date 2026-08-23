@@ -2,29 +2,39 @@ import { SessionInfo } from "@/types";
 
 const SESSION_KEY = "carespeak_session";
 const DEVICE_KEY = "carespeak_device_id";
+const ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous I,O,0,1
 
-function generateId(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let result = "";
-  for (let i = 0; i < 6; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+function randomId(length = 6): string {
+  const bytes = new Uint8Array(length);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < length; i++) bytes[i] = Math.floor(Math.random() * 256);
   }
-  return result;
+  let out = "";
+  for (let i = 0; i < length; i++) out += ID_ALPHABET[bytes[i] % ID_ALPHABET.length];
+  return out;
 }
 
-function generateDeviceId(): string {
-  const existing = typeof window !== "undefined" ? localStorage.getItem(DEVICE_KEY) : null;
-  if (existing) return existing;
-  const id = `device_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+export function generateDeviceId(): string {
   if (typeof window !== "undefined") {
-    try { localStorage.setItem(DEVICE_KEY, id); } catch {}
+    try {
+      const existing = localStorage.getItem(DEVICE_KEY);
+      if (existing) return existing;
+    } catch {}
+  }
+  const id = `device_${Date.now().toString(36)}_${randomId(6).toLowerCase()}`;
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem(DEVICE_KEY, id);
+    } catch {}
   }
   return id;
 }
 
 export function getOrCreateSession(): SessionInfo {
   if (typeof window === "undefined") {
-    return { sessionId: generateId(), deviceId: "server", createdAt: Date.now() };
+    return { sessionId: randomId(), deviceId: "server", createdAt: Date.now() };
   }
   try {
     const stored = localStorage.getItem(SESSION_KEY);
@@ -34,30 +44,37 @@ export function getOrCreateSession(): SessionInfo {
     }
   } catch {}
   const session: SessionInfo = {
-    sessionId: generateId(),
+    sessionId: randomId(),
     deviceId: generateDeviceId(),
     createdAt: Date.now(),
   };
-  try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch {}
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  } catch {}
   return session;
 }
 
+/** Pair this device to an existing session (QR scan / manual entry) */
 export function setSessionId(sessionId: string): SessionInfo {
+  const clean = sessionId.trim().toUpperCase();
   const session: SessionInfo = {
-    sessionId,
+    sessionId: clean,
     deviceId: generateDeviceId(),
     createdAt: Date.now(),
   };
   if (typeof window !== "undefined") {
-    try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch {}
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    } catch {}
   }
   return session;
 }
 
 export function clearSession(): void {
-  if (typeof window !== "undefined") {
-    try { localStorage.removeItem(SESSION_KEY); } catch {}
-  }
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {}
 }
 
 export function getSession(): SessionInfo | null {
@@ -71,6 +88,5 @@ export function getSession(): SessionInfo | null {
 
 export function getNurseDashboardUrl(sessionId: string): string {
   if (typeof window === "undefined") return "";
-  const base = window.location.origin;
-  return `${base}/nurse-view?session=${sessionId}`;
+  return `${window.location.origin}/nurse-view?session=${sessionId}`;
 }
