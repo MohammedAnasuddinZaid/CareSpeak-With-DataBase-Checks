@@ -135,7 +135,7 @@ export default function EyeModePage() {
 
         <QRPairingDisplay sessionId={sessionId} compact />
         <CompanionMessageInput onSend={sendCompanionNote} />
-        <NurseReplyBanner reply={latestReply?.text?.startsWith("[PAIN]") ? null : latestReply} />
+        <NurseReplyBanner reply={latestReply?.from === "Nurse" && !latestReply.text?.startsWith("[PAIN]") ? latestReply : null} />
         <PainScaleOverlay
           state={pain}
           gesture={cameraOn ? gesture : null}

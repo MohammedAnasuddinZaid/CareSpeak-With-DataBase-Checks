@@ -55,6 +55,10 @@ export class NetworkSync {
   private onlineHandler = () => void this.flushOutbox();
   private seenIds = new Set<string>();
   private knownStatus = new Map<string, string>();
+  /** Replies are delivered exactly once per id across every transport —
+   *  SSE redeliveries, REST reconcile windows and reconnects all funnel
+   *  through deliverReply() which drops duplicates. */
+  private seenReplyIds = new Set<string>();
   private cursor = Date.now() - 60_000;
   private pollInterval = POLL_INTERVAL_MS;
   private failures = 0;
@@ -171,7 +175,7 @@ export class NetworkSync {
         try {
           const replies = JSON.parse((ev as MessageEvent).data) as NurseReply[];
           this.markInbound();
-          for (const r of replies) this.cfg.onReply?.(r);
+          for (const r of replies) this.deliverReply(r);
         } catch {}
       });
 
@@ -321,7 +325,7 @@ export class NetworkSync {
       this.ingestEntries(data.entries ?? []);
       if (Object.keys(data.patientMetrics ?? {}).length > 0) this.cfg.onMetrics?.(data.patientMetrics);
       if (Object.keys(data.vitals ?? {}).length > 0) this.cfg.onVitals?.(data.vitals);
-      for (const r of data.replies ?? []) this.cfg.onReply?.(r);
+      for (const r of data.replies ?? []) this.deliverReply(r);
     } catch {
       this.failures++;
       this.pollInterval = Math.min(this.pollInterval * 2, MAX_POLL_INTERVAL_MS);
@@ -415,7 +419,18 @@ export class NetworkSync {
       this.knownStatus.set(msg.action.entryId, msg.action.type);
       this.cfg.onStatusUpdate?.(msg.action.entryId, msg.action.type);
     }
-    if (msg.kind === "reply") this.cfg.onReply?.(msg.reply);
+    if (msg.kind === "reply") this.deliverReply(msg.reply);
+  }
+
+  /** Exactly-once reply delivery: dedupes across SSE, REST polling, reconnect
+   *  replays and same-device broadcasts by reply id. */
+  private deliverReply(r: NurseReply): void {
+    if (!r || this.seenReplyIds.has(r.id)) return;
+    this.seenReplyIds.add(r.id);
+    if (this.seenReplyIds.size > 300) {
+      for (const id of Array.from(this.seenReplyIds).slice(0, 100)) this.seenReplyIds.delete(id);
+    }
+    this.cfg.onReply?.(r);
   }
 
   /* ── status plumbing ───────────────────────────────────── */

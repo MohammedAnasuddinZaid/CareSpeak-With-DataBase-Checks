@@ -105,7 +105,7 @@ export default function HandModePage() {
 
         <QRPairingDisplay sessionId={sessionId} compact />
         <CompanionMessageInput onSend={sendCompanionNote} />
-        <NurseReplyBanner reply={latestReply} />
+        <NurseReplyBanner reply={latestReply?.from === "Nurse" ? latestReply : null} />
 
         <AnimatePresence>
           {error && (

@@ -22,6 +22,9 @@ export async function GET(request: NextRequest): Promise<Response> {
   }
 
   let cursor = Number(searchParams.get("since") ?? Date.now() - 60_000);
+  // Replies have their OWN cursor — otherwise they'd be re-sent on every tick
+  // until an unrelated gesture entry happened to advance the shared one.
+  let replyCursor = cursor;
   const encoder = new TextEncoder();
   let closed = false;
   let loopTimer: ReturnType<typeof setTimeout> | null = null;
@@ -60,14 +63,17 @@ export async function GET(request: NextRequest): Promise<Response> {
             store.getEntriesSince(session, cursor),
             store.getMetrics(session),
             store.getVitals(session),
-            store.getRepliesSince(session, cursor),
+            store.getRepliesSince(session, replyCursor),
           ]);
           const snapshot = JSON.stringify({ m: metrics, v: vitals });
           if (entries.length > 0) {
             cursor = Math.max(...entries.map((e) => e.serverTime ?? e.timestamp));
             send("entries", entries);
           }
-          if (replies.length > 0) send("replies", replies);
+          if (replies.length > 0) {
+            replyCursor = Math.max(...replies.map((r) => r.timestamp));
+            send("replies", replies);
+          }
           if (snapshot !== lastSnapshot) {
             lastSnapshot = snapshot;
             send("state", { patientMetrics: metrics, vitals, serverTime: Date.now(), cursor });

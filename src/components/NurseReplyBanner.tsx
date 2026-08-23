@@ -16,9 +16,13 @@ const LANGS: readonly string[] = [
 export default function NurseReplyBanner({ reply }: { reply: NurseReply | null }) {
   const [visible, setVisible] = useState(false);
   const spokenId = useRef<string | null>(null);
+  const lastProcessedId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!reply || reply.text.startsWith("[PAIN]")) return; // pain requests render as their own overlay
+    // Identity-proof: redeliveries arrive as fresh objects with the SAME id.
+    if (lastProcessedId.current === reply.id) return;
+    lastProcessedId.current = reply.id;
     setVisible(true);
     if (spokenId.current !== reply.id) {
       spokenId.current = reply.id;

@@ -87,9 +87,12 @@ export default function NurseViewPage() {
   /* messages typed by someone sitting with the patient */
   const [patientMsgs, setPatientMsgs] = useState<NurseReply[]>([]);
   const [unseenMsgs, setUnseenMsgs] = useState(0);
+  const seenCompanionIds = useRef<Set<string>>(new Set());
   const handleCompanionReply = useCallback((r: NurseReply) => {
     if (r.from === "Nurse") return; // ignore echo of our own outgoing replies
-    setPatientMsgs((prev) => (prev.some((m) => m.id === r.id) ? prev : [r, ...prev].slice(0, 30)));
+    if (seenCompanionIds.current.has(r.id)) return; // exactly-once (redelivery-proof)
+    seenCompanionIds.current.add(r.id);
+    setPatientMsgs((prev) => [r, ...prev].slice(0, 30));
     setUnseenMsgs((n) => n + 1);
   }, []);
 
