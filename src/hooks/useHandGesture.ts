@@ -61,6 +61,7 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
   const [numHands, setNumHands] = useState(0);
   const numHandsRef = useRef(0);
   const [modelReady, setModelReady] = useState(false);
+  const [booting, setBooting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cameraOn, setCameraOn] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -80,6 +81,7 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
     if (landmarkerRef.current) return true;
     if (creatingRef.current) return false;
     creatingRef.current = true;
+    setBooting(true);
     try {
       const wasm = await FilesetResolver.forVisionTasks(WASM_URL);
       const landmarker = await HandLandmarker.createFromOptions(wasm, {
@@ -97,6 +99,7 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
       return false;
     } finally {
       creatingRef.current = false;
+      setBooting(false);
     }
   }, []);
 
@@ -288,21 +291,35 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
   const startCamera = useCallback(async () => {
     setError(null);
     const ok = await ensureLandmarker();
-    if (!ok || !videoRef.current) return;
+    if (!ok) return;
+    const video = videoRef.current;
+    if (!video) {
+      setError("Camera panel is not ready — please refresh the page and try again.");
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, facingMode: "user" },
       });
-      videoRef.current.srcObject = stream;
+      video.srcObject = stream;
       streamRef.current = stream;
-      await videoRef.current.play();
+      await video.play();
       setCameraOn(true);
       if (!runningRef.current) {
         runningRef.current = true;
         animRef.current = requestAnimationFrame(processFrames);
       }
-    } catch {
-      setError("Camera access denied. Allow camera permission in your browser settings and try again.");
+    } catch (e) {
+      const name = (e as DOMException)?.name ?? "";
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        setError("Camera permission denied. Click the camera icon in the address bar, allow access, then press Start Camera again.");
+      } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+        setError("No camera found. Connect a webcam (or enable it in device settings) and try again.");
+      } else if (name === "NotReadableError" || name === "TrackStartError") {
+        setError("Camera is busy. Close other apps using it (Zoom / Meet / Teams / another tab), then try again.");
+      } else {
+        setError("Could not start the camera. Use Chrome or Edge over localhost/HTTPS, allow camera access, and retry.");
+      }
     }
   }, [ensureLandmarker, processFrames]);
 
@@ -346,7 +363,7 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
     fps,
     numHands,
     modelReady,
-    loading: !modelReady,
+    loading: booting,
     error,
     cameraOn,
     isPaused,
