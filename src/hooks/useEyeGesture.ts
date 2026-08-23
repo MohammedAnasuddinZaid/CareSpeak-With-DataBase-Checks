@@ -41,6 +41,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
   const smootherRef = useRef(new EyeGestureSmoother());
   const calibratorRef = useRef(new IrisCalibrator());
   const stabilizerRef = useRef(new GazeStabilizer());
+  const prevBlinkRef = useRef(false);
   const lastLoggedGesture = useRef<string | null>(null);
   const lastGestureAtRef = useRef(0);
   const restState = useRef({ transitions: 0, windowStart: 0, cooldownUntil: 0 });
@@ -160,12 +161,18 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
       faceLm = result.faceLandmarks[0].map((lm) => ({ x: lm.x, y: lm.y, z: lm.z ?? 0 }));
       const rawOff = computeAvgIrisOffset(faceLm, true);
       const classified = classifyEyeGesture(faceLm, { mirrored: true, baseline: calibratorRef.current.value });
-      // Learn the neutral baseline from neutral frames only — never during a hold.
+      // Robust neutral-baseline learning (median/MAD) from neutral frames only.
       calibratorRef.current.updateGated(rawOff, {
         isBlinking: !!classified?.isBlinking,
         activeGesture: classified?.gesture ?? null,
       });
-      // Hysteresis kills micro-saccade flapping so the smoother sees a stable stream.
+      // Self-tune the stabilizer's enter/exit bands to this user's jitter.
+      stabilizerRef.current.tune(calibratorRef.current.spread);
+      // Eyes reopening produce garbage iris readings for a few frames.
+      const blinkingNow = !!classified?.isBlinking;
+      if (!blinkingNow && prevBlinkRef.current) stabilizerRef.current.markRecovery();
+      prevBlinkRef.current = blinkingNow;
+      // Hysteresis + glitch guard + debounce -> stable stream for the smoother.
       raw = stabilizerRef.current.filter(classified);
     }
 
@@ -364,6 +371,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     smootherRef.current.reset();
     calibratorRef.current.reset();
     stabilizerRef.current.reset();
+    prevBlinkRef.current = false;
     restState.current = { transitions: 0, windowStart: 0, cooldownUntil: 0 };
     pauseState.current = { paused: false, closeStart: 0 };
     lastLoggedGesture.current = null;

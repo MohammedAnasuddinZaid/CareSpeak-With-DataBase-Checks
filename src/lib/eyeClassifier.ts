@@ -75,45 +75,80 @@ export function computeAvgIrisOffset(faceLandmarks: Point[], mirrored = true): {
  * bias alone can exceed thresholds and masquerade as WATER forever.
  * Fast lock-on (~3s), then slow drift to track lighting/pose changes.
  */
+/**
+ * Robust neutral-gaze estimator. Keeps a rolling window of neutral samples and
+ * uses MEDIAN + MAD (median absolute deviation) instead of a mean-EMA:
+ *   - median is immune to blink-recovery glitch frames dragging the estimate
+ *   - MAD gives a per-user noise-floor sigma used for adaptive thresholds
+ * Bootstrap: the first ~45 accepted frames ignore the (unreliable) gesture
+ * label; afterwards ONLY frames classified as neutral are learned, so a
+ * sustained deliberate gaze can never drag the baseline mid-hold.
+ */
 export class IrisCalibrator {
+  private static readonly CAP = 140;
+  private xs: number[] = [];
+  private ys: number[] = [];
   private bx = 0;
   private by = 0;
+  private sx = 0.008;
+  private sy = 0.008;
   private n = 0;
+  private warm = false;
 
-  /**
-   * Neutral-only update. After a short bootstrap window (where labels are
-   * unreliable so almost everything is accepted except blinks), calibration
-   * learns ONLY from frames classified as neutral — otherwise a sustained
-   * deliberate gaze would slowly drag the baseline and kill the gesture
-   * mid-hold.
-   */
   updateGated(
     raw: { x: number; y: number },
     ctx: { isBlinking: boolean; activeGesture: string | null }
   ): void {
     if (ctx.isBlinking) return;
-    if (this.n >= 40 && ctx.activeGesture) return;
-    const dx = raw.x - this.bx;
-    const dy = raw.y - this.by;
-    if (this.n >= 10 && Math.sqrt(dx * dx + dy * dy) > 0.12) return;
-    const k = this.n < 90 ? 0.12 : 0.006;
-    this.bx += k * dx;
-    this.by += k * dy;
+    if (this.warm && ctx.activeGesture) return;
+    this.xs.push(raw.x);
+    this.ys.push(raw.y);
+    if (this.xs.length > IrisCalibrator.CAP) {
+      this.xs.shift();
+      this.ys.shift();
+    }
     this.n++;
+    if (this.n % 4 === 0 || !this.warm) this.recompute();
+    if (!this.warm && this.n >= 45) this.warm = true;
+  }
+
+  private recompute(): void {
+    const med = (a: number[]): number => {
+      const s = [...a].sort((p, q) => p - q);
+      const m = s.length >> 1;
+      return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+    };
+    this.bx = med(this.xs);
+    this.by = med(this.ys);
+    const madx = med(this.xs.map((v) => Math.abs(v - this.bx)));
+    const mady = med(this.ys.map((v) => Math.abs(v - this.by)));
+    // 1.4826 makes MAD comparable to standard deviation under normality
+    this.sx = Math.max(0.004, 1.4826 * madx);
+    this.sy = Math.max(0.004, 1.4826 * mady);
   }
 
   get value(): { x: number; y: number } {
     return { x: this.bx, y: this.by };
   }
 
+  /** Robust spread (sigma-like) per axis for adaptive thresholds. */
+  get spread(): { sx: number; sy: number } {
+    return { sx: this.sx, sy: this.sy };
+  }
+
   get ready(): boolean {
-    return this.n >= 45;
+    return this.warm;
   }
 
   reset(): void {
+    this.xs = [];
+    this.ys = [];
     this.bx = 0;
     this.by = 0;
+    this.sx = 0.008;
+    this.sy = 0.008;
     this.n = 0;
+    this.warm = false;
   }
 }
 
@@ -164,51 +199,121 @@ export function classifyEyeGesture(faceLandmarks: Point[], opts: EyeClassifyOpti
 type GazeDir = "YES" | "NO" | "WATER";
 
 /**
- * Schmitt-trigger for gaze direction. Micro-saccades make raw iris offsets
- * flip sign frame-to-frame near the threshold; a plain majority vote then
- * restarts its confidence ramp forever and the gesture never announces.
- * Once entered, a direction is HELD until the offset genuinely relaxes below
- * the exit band — switching direction requires full-strength counter evidence.
+ * Schmitt-trigger stabilizer for gaze direction, hardened against every
+ * real-world eye-tracking failure mode:
+ *
+ *  1. ADAPTIVE BANDS   — enter/exit thresholds scale with the user's measured
+ *     jitter (MAD-sigma from IrisCalibrator), so a twitchy camera needs a
+ *     bigger deliberate look and a steady one needs only a small one.
+ *  2. GLITCH GUARD     — an inter-frame jump larger than physically possible
+ *     for smooth eye motion is a landmark spike; the frame is discarded.
+ *  3. SWITCH DEBOUNCE  — stealing a held direction requires full-strength
+ *     counter evidence on TWO consecutive frames (kills single-frame spikes).
+ *  4. RECOVERY REFRACTORY — for ~130ms after eyes reopen, gaze results are
+ *     suppressed because iris landmarks are unreliable during re-opening.
+ *  5. MOUTH PASSTHROUGH — WATER from an open mouth carries no offsets and is
+ *     never treated as gaze.
  */
 export class GazeStabilizer {
   private active: GazeDir | null = null;
-  private readonly ENTER = 0.055;
-  private readonly EXIT = 0.03;
+  private pending: GazeDir | null = null;
+  private pendingCount = 0;
+  private lastRaw: { x: number; y: number } | null = null;
+  private glitchStreak = 0;
+  private refractoryUntil = 0;
+  private enterX = 0.055;
+  private enterY = 0.055;
+  private readonly exitFactor = 0.55;
 
-  filter(r: EyeClassifierResult | null): EyeClassifierResult | null {
+  /** Feed the calibrator's robust spread to self-tune the bands per user. */
+  tune(spread: { sx: number; sy: number }): void {
+    const cap = (v: number): number => Math.min(v, 0.025);
+    this.enterX = Math.max(0.05, 3.2 * cap(spread.sx) + 0.015);
+    this.enterY = Math.max(0.055, 3.2 * cap(spread.sy) + 0.015);
+  }
+
+  /** Eyes just reopened — suppress gaze classification briefly. */
+  markRecovery(now: number = Date.now()): void {
+    this.refractoryUntil = now + 130;
+  }
+
+  filter(r: EyeClassifierResult | null, now: number = Date.now()): EyeClassifierResult | null {
     if (!r || r.isBlinking) return r;
     const g = r.gesture;
-
-    // WATER can come from an OPEN MOUTH (no gaze offset at all) — hysteresis
-    // only applies to gaze-derived signals, so mouth-driven frames pass as-is.
     const dx = r.dx ?? 0;
     const dy = r.dy ?? 0;
-    const isGazeSignal =
-      !!g && (g === "YES" || g === "NO" || (g === "WATER" && Math.max(Math.abs(dx), Math.abs(dy)) >= this.EXIT));
 
-    if (!g || g === "HELP" || !isGazeSignal) {
+    // 2) Glitch guard: saccades move < ~0.25 normalized units between frames.
+    // A single outlier frame is dropped while KEEPING the last-good reference;
+    // only a sustained jump (2+ consecutive far frames) is treated as genuine
+    // movement — otherwise one spike would poison the next frame too.
+    if (this.lastRaw) {
+      const jump = Math.hypot(dx - this.lastRaw.x, dy - this.lastRaw.y);
+      if (jump > 0.28 && this.glitchStreak < 1) {
+        this.glitchStreak++;
+        return { ...r, gesture: null };
+      }
+    }
+    this.glitchStreak = 0;
+    this.lastRaw = { x: dx, y: dy };
+
+    const exitX = this.enterX * this.exitFactor;
+    const exitY = this.enterY * this.exitFactor;
+
+    // 5) mouth-driven WATER (no offsets) passes straight through.
+    const isMouthWater = g === "WATER" && Math.abs(dx) < exitX && Math.abs(dy) < exitY;
+
+    if (!g || g === "HELP" || isMouthWater) {
       // Neutral frame — release a held direction once its offset truly relaxes.
       if (this.active) {
         const mag = this.active === "WATER" ? Math.abs(dy) : Math.abs(dx);
-        if (mag < this.EXIT) this.active = null;
+        if (mag < (this.active === "WATER" ? exitY : exitX)) this.active = null;
       }
       return r;
     }
 
+    // 4) post-blink refractory: readings are still settling.
+    if (now < this.refractoryUntil) return { ...r, gesture: null };
+
     const dir = g as GazeDir;
     const mag = dir === "WATER" ? Math.abs(dy) : Math.abs(dx);
+    const enter = dir === "WATER" ? this.enterY : this.enterX;
 
     if (this.active) {
-      if (mag >= this.EXIT) {
-        if (dir !== this.active && mag >= this.ENTER) this.active = dir; // deliberate switch
+      const activeMag = this.active === "WATER" ? Math.abs(dy) : Math.abs(dx);
+      const activeExit = this.active === "WATER" ? exitY : exitX;
+
+      if (activeMag < activeExit) {
+        // Held direction genuinely relaxed.
+        this.active = null;
+        this.pending = null;
+        this.pendingCount = 0;
+      } else {
+        if (dir !== this.active) {
+          // 3) debounce: a different direction must insist twice.
+          if (dir === this.pending) this.pendingCount++;
+          else {
+            this.pending = dir;
+            this.pendingCount = 1;
+          }
+          if (mag >= enter && this.pendingCount >= 2) {
+            this.active = dir;
+            this.pending = null;
+            this.pendingCount = 0;
+            return { ...r, gesture: this.active };
+          }
+          return { ...r, gesture: this.active }; // keep holding through noise
+        }
+        this.pending = null;
+        this.pendingCount = 0;
         return { ...r, gesture: this.active };
       }
-      this.active = null; // gaze truly relaxed
-      return { ...r, gesture: null };
     }
 
-    if (mag >= this.ENTER) {
+    if (mag >= enter) {
       this.active = dir;
+      this.pending = null;
+      this.pendingCount = 0;
       return r;
     }
     return { ...r, gesture: null }; // weak flicker must not enter the vote
@@ -216,6 +321,11 @@ export class GazeStabilizer {
 
   reset(): void {
     this.active = null;
+    this.pending = null;
+    this.pendingCount = 0;
+    this.lastRaw = null;
+    this.glitchStreak = 0;
+    this.refractoryUntil = 0;
   }
 }
 

@@ -142,13 +142,48 @@ describe("GazeStabilizer (micro-saccade hysteresis)", () => {
     expect(s.filter(res(-0.045, "YES")).gesture).toBeNull(); // ghost blocked after release
   });
 
-  it("switches direction only on full-strength counter evidence", () => {
+  it("switches direction only on debounced, full-strength counter evidence", () => {
     const s = new GazeStabilizer();
     s.filter(res(-0.07, "YES"));
-    const switched = s.filter(res(0.08, "NO"));
-    expect(switched.gesture).toBe("NO");
+    // single NO frame at full strength is treated as a spike -> still YES
+    expect(s.filter(res(0.08, "NO")).gesture).toBe("YES");
+    // second consecutive NO frame confirms a deliberate switch
+    expect(s.filter(res(0.08, "NO")).gesture).toBe("NO");
     expect(s.filter(res(0.04, "NO")).gesture).toBe("NO"); // held through decay band
     expect(s.filter(res(0.005, null)).gesture).toBeNull(); // then released
+  });
+
+  it("a single violent landmark spike cannot steal or create a state", () => {
+    const s = new GazeStabilizer();
+    s.filter(res(-0.07, "YES"));
+    // spike frame is discarded (nulled); the smoother majority keeps YES alive
+    expect(s.filter(res(0.35, "NO")).gesture).toBeNull();
+    expect(s.filter(res(-0.06, "YES")).gesture).toBe("YES"); // signal intact
+  });
+
+  it("an impossible inter-frame jump is discarded as a glitch frame", () => {
+    const s = new GazeStabilizer();
+    const first = s.filter(res(-0.07, "YES"));
+    expect(first.gesture).toBe("YES");
+    const glitched = s.filter(res(0.30, "NO"));
+    expect(glitched.gesture).toBeNull(); // jump of 0.37 > 0.28 physical limit
+  });
+
+  it("post-blink refractory suppresses reopening garbage", () => {
+    const s = new GazeStabilizer();
+    const t0 = 10_000;
+    s.markRecovery(t0);
+    expect(s.filter(res(-0.09, "YES"), t0 + 50).gesture).toBeNull(); // inside refractory
+    expect(s.filter(res(-0.09, "YES"), t0 + 200).gesture).toBe("YES"); // settled -> accepted
+  });
+
+  it("adaptive bands scale with the user's measured jitter", () => {
+    const twitchy = new GazeStabilizer();
+    twitchy.tune({ sx: 0.02, sy: 0.02 }); // noisy user -> enterX ≈ 3.2*0.02+0.015
+    expect(twitchy.filter(res(0.06, "NO")).gesture).toBeNull(); // below their band
+    const steady = new GazeStabilizer();
+    steady.tune({ sx: 0.004, sy: 0.004 }); // steady user -> floor 0.05 applies
+    expect(steady.filter(res(0.06, "NO")).gesture).toBe("NO");
   });
 
   it("lets mouth-driven WATER pass untouched (regression)", () => {
