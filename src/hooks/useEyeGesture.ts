@@ -42,6 +42,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
   const calibratorRef = useRef(new IrisCalibrator());
   const stabilizerRef = useRef(new GazeStabilizer());
   const lastLoggedGesture = useRef<string | null>(null);
+  const lastGestureAtRef = useRef(0);
   const restState = useRef({ transitions: 0, windowStart: 0, cooldownUntil: 0 });
   const pauseState = useRef({ paused: false, closeStart: 0 });
   const lastFpsTime = useRef(0);
@@ -206,6 +207,10 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     liveRef.current.confidence = smoothed.confidence;
 
     // Throttled state sync (max ~10Hz instead of 30-60Hz)
+    if (smoothed.gesture) lastGestureAtRef.current = Date.now();
+    else if (Date.now() - lastGestureAtRef.current > 800 && lastLoggedGesture.current)
+      lastLoggedGesture.current = null; // released long enough -> identical repeat announces again
+
     setGesture((prev) => (prev === smoothed.gesture ? prev : smoothed.gesture));
     setConfidence((prev) => (Math.abs(prev - smoothed.confidence) > 0.02 ? smoothed.confidence : prev));
 
@@ -362,6 +367,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     restState.current = { transitions: 0, windowStart: 0, cooldownUntil: 0 };
     pauseState.current = { paused: false, closeStart: 0 };
     lastLoggedGesture.current = null;
+    lastGestureAtRef.current = 0;
   }, []);
 
   useEffect(() => {

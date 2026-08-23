@@ -150,6 +150,13 @@ describe("GazeStabilizer (micro-saccade hysteresis)", () => {
     expect(s.filter(res(0.04, "NO")).gesture).toBe("NO"); // held through decay band
     expect(s.filter(res(0.005, null)).gesture).toBeNull(); // then released
   });
+
+  it("lets mouth-driven WATER pass untouched (regression)", () => {
+    // Mouth-open WATER has no gaze offsets; hysteresis must not swallow it.
+    const s = new GazeStabilizer();
+    const out = s.filter({ gesture: "WATER", confidence: 1, isBlinking: false, dx: 0.004, dy: -0.003 });
+    expect(out.gesture).toBe("WATER");
+  });
 });
 
 function entry(partial: Partial<GestureLogEntry>): GestureLogEntry {

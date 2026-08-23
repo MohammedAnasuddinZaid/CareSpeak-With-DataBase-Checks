@@ -18,7 +18,7 @@ import {
   FileText,
   Radio,
 } from "lucide-react";
-import { GestureLogEntry, ESCALATION_RULES } from "@/types";
+import { GestureLogEntry, NurseReply, ESCALATION_RULES } from "@/types";
 import { getSession, setSessionId, clearSession } from "@/lib/session";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { evaluateEscalations } from "@/lib/escalation";
@@ -65,10 +65,20 @@ export default function NurseViewPage() {
     setLog((prev) => (prev.some((e) => e.id === entry.id) ? prev : [entry, ...prev]));
   }, []);
 
+  /* messages typed by someone sitting with the patient */
+  const [patientMsgs, setPatientMsgs] = useState<NurseReply[]>([]);
+  const [unseenMsgs, setUnseenMsgs] = useState(0);
+  const handleCompanionReply = useCallback((r: NurseReply) => {
+    if (r.from === "Nurse") return; // ignore echo of our own outgoing replies
+    setPatientMsgs((prev) => (prev.some((m) => m.id === r.id) ? prev : [r, ...prev].slice(0, 30)));
+    setUnseenMsgs((n) => n + 1);
+  }, []);
+
   const { status, transport, driver, remoteMetrics, vitals, sendAction, sendReply } = useLiveSync({
     sessionId: sessionInput,
     enabled: paired,
     onAlert: handleAlert,
+    onReply: handleCompanionReply,
   });
 
   /* ── pairing: ?session= QR param ALWAYS wins over any stale saved session ── */
@@ -503,6 +513,40 @@ export default function NurseViewPage() {
                   className="btn-primary px-4 py-2.5 text-sm disabled:opacity-40">Send</button>
               </div>
               <p className="text-[10px] text-[#9ca3af] mt-2">Messages appear full-screen on the patient device and are spoken aloud.</p>
+            </div>
+
+            {/* messages typed by a companion sitting with the patient */}
+            <div className="card p-5">
+              <button
+                onClick={() => setUnseenMsgs(0)}
+                className="w-full flex items-center gap-2 mb-3 text-left"
+                title={unseenMsgs > 0 ? `${unseenMsgs} new message(s) — click to mark read` : undefined}
+              >
+                <Send className="w-4 h-4 text-[#22a67e]" />
+                <h3 className="text-sm font-semibold text-[#1f1f1f] flex-1">From Patient Side</h3>
+                {unseenMsgs > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-[#c63a22] text-white text-[10px] font-bold animate-pulse">
+                    {unseenMsgs}
+                  </span>
+                )}
+              </button>
+              {patientMsgs.length === 0 ? (
+                <p className="text-xs text-[#9ca3af]">
+                  Notes typed by someone sitting with the patient appear here instantly.
+                </p>
+              ) : (
+                <ul className="space-y-2 max-h-48 overflow-y-auto" role="log" aria-live="polite">
+                  {patientMsgs.map((m) => (
+                    <li key={m.id} className="rounded-xl bg-[#f0fdf4] border border-[#bbf7d0] px-3 py-2">
+                      <div className="flex items-center justify-between gap-2 mb-0.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#16855f]">{m.from}</span>
+                        <span className="text-[10px] text-[#9ca3af]">{new Date(m.timestamp).toLocaleTimeString()}</span>
+                      </div>
+                      <p className="text-sm text-[#1f1f1f] break-words">{m.text}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             <ClinicianActions entries={actionable} onAcknowledge={handleAcknowledge} onEscalate={handleEscalate} onResolve={handleResolve} />

@@ -13,6 +13,7 @@ import { getOrCreateSession } from "@/lib/session";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { addGestureLog } from "@/lib/gestureLog";
 import QRPairingDisplay from "@/components/QRPairingDisplay";
+import CompanionMessageInput from "@/components/CompanionMessageInput";
 import DemoModeControls from "@/components/DemoModeControls";
 import PatientMetricsCard from "@/components/PatientMetricsCard";
 import NurseReplyBanner from "@/components/NurseReplyBanner";
@@ -29,7 +30,14 @@ export default function EyeModePage() {
   const sessionRef = useRef(getOrCreateSession());
   const sessionId = sessionRef.current.sessionId;
 
-  const { sendAlert, sendPatientMetrics, status, transport, latestReply } = useLiveSync({ sessionId });
+  const { sendAlert, sendReply, sendPatientMetrics, status, transport, latestReply } = useLiveSync({ sessionId });
+
+  const sendCompanionNote = useCallback(
+    (text: string) => {
+      sendReply(text, "Companion");
+    },
+    [sendReply]
+  );
 
   const broadcast = useCallback(
     (gesture: string, description: string, confidence: number) => {
@@ -94,6 +102,7 @@ export default function EyeModePage() {
         </motion.div>
 
         <QRPairingDisplay sessionId={sessionId} compact />
+        <CompanionMessageInput onSend={sendCompanionNote} />
         <NurseReplyBanner reply={latestReply} />
 
         <AnimatePresence>

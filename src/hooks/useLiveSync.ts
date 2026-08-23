@@ -20,6 +20,8 @@ export interface UseLiveSyncOptions {
   enabled?: boolean;
   /** Called for every newly observed gesture entry (remote or local echo). */
   onAlert?: (entry: GestureLogEntry) => void;
+  /** Called for every incoming reply (nurse -> patient, or companion -> nurse). */
+  onReply?: (reply: NurseReply) => void;
 }
 
 export interface LiveSyncApi {
@@ -37,10 +39,12 @@ export interface LiveSyncApi {
   sendPatientMetrics: (metrics: PatientMetrics) => void;
 }
 
-export function useLiveSync({ sessionId, enabled = true, onAlert }: UseLiveSyncOptions = {}): LiveSyncApi {
+export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: UseLiveSyncOptions = {}): LiveSyncApi {
   const syncRef = useRef<NetworkSync | null>(null);
   const alertCb = useRef(onAlert);
   alertCb.current = onAlert;
+  const replyCb = useRef(onReply);
+  replyCb.current = onReply;
 
   const [status, setStatus] = useState<ConnStatus>("disconnected");
   const [transport, setTransport] = useState<Transport>("none");
@@ -60,7 +64,10 @@ export function useLiveSync({ sessionId, enabled = true, onAlert }: UseLiveSyncO
       onStatusUpdate: () => {},
       onMetrics: (m) => setRemoteMetrics((prev) => ({ ...prev, ...m })),
       onVitals: (v) => setVitals((prev) => ({ ...prev, ...v })),
-      onReply: (r) => setLatestReply(r),
+      onReply: (r) => {
+        setLatestReply(r);
+        replyCb.current?.(r);
+      },
       onDriver: (d) => setDriver(d),
       onStatusChange: (s, t) => {
         setStatus(s);

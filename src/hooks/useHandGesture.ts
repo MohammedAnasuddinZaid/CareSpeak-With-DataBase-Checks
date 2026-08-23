@@ -42,6 +42,7 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
   const runningRef = useRef(false);
   const smootherRef = useRef(new HandGestureSmoother());
   const lastLoggedGesture = useRef<string | null>(null);
+  const lastGestureAtRef = useRef(0);
   const restState = useRef({ transitions: 0, windowStart: 0, cooldownUntil: 0 });
   const pauseState = useRef({ paused: false, palmOpenStart: 0 });
   const waterHold = useRef({ start: 0, fired: false });
@@ -197,6 +198,10 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
       liveRef.current.gesture = smoothed.gesture;
       liveRef.current.confidence = smoothed.confidence;
 
+      if (smoothed.gesture) lastGestureAtRef.current = Date.now();
+      else if (Date.now() - lastGestureAtRef.current > 800 && lastLoggedGesture.current)
+        lastLoggedGesture.current = null; // released long enough -> identical repeat announces again
+
       setGesture((prev) => (prev === smoothed.gesture ? prev : smoothed.gesture));
       setConfidence((prev) =>
         Math.abs(prev - smoothed.confidence) > 0.02 ? smoothed.confidence : prev
@@ -340,6 +345,7 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
     pauseState.current = { paused: false, palmOpenStart: 0 };
     waterHold.current = { start: 0, fired: false };
     lastLoggedGesture.current = null;
+    lastGestureAtRef.current = 0;
   }, []);
 
   useEffect(() => {

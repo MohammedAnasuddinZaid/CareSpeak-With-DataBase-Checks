@@ -179,17 +179,24 @@ export class GazeStabilizer {
     if (!r || r.isBlinking) return r;
     const g = r.gesture;
 
-    if (!g || g === "HELP") {
+    // WATER can come from an OPEN MOUTH (no gaze offset at all) — hysteresis
+    // only applies to gaze-derived signals, so mouth-driven frames pass as-is.
+    const dx = r.dx ?? 0;
+    const dy = r.dy ?? 0;
+    const isGazeSignal =
+      !!g && (g === "YES" || g === "NO" || (g === "WATER" && Math.max(Math.abs(dx), Math.abs(dy)) >= this.EXIT));
+
+    if (!g || g === "HELP" || !isGazeSignal) {
       // Neutral frame — release a held direction once its offset truly relaxes.
       if (this.active) {
-        const mag = this.active === "WATER" ? Math.abs(r.dy ?? 0) : Math.abs(r.dx ?? 0);
+        const mag = this.active === "WATER" ? Math.abs(dy) : Math.abs(dx);
         if (mag < this.EXIT) this.active = null;
       }
       return r;
     }
 
     const dir = g as GazeDir;
-    const mag = dir === "WATER" ? Math.abs(r.dy ?? 0) : Math.abs(r.dx ?? 0);
+    const mag = dir === "WATER" ? Math.abs(dy) : Math.abs(dx);
 
     if (this.active) {
       if (mag >= this.EXIT) {
