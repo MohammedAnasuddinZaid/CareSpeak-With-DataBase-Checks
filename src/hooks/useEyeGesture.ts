@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
-import { classifyEyeGesture, EyeGestureSmoother, IrisCalibrator, computeAvgIrisOffset } from "@/lib/eyeClassifier";
+import { classifyEyeGesture, EyeGestureSmoother, GazeStabilizer, IrisCalibrator, computeAvgIrisOffset } from "@/lib/eyeClassifier";
 import { voiceAlert } from "@/lib/tts";
 import { addGestureLog } from "@/lib/gestureLog";
 import { EyeGesture, EYE_GESTURE_MAP, PatientMetrics, Point } from "@/types";
@@ -40,6 +40,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
   const runningRef = useRef(false);
   const smootherRef = useRef(new EyeGestureSmoother());
   const calibratorRef = useRef(new IrisCalibrator());
+  const stabilizerRef = useRef(new GazeStabilizer());
   const lastLoggedGesture = useRef<string | null>(null);
   const restState = useRef({ transitions: 0, windowStart: 0, cooldownUntil: 0 });
   const pauseState = useRef({ paused: false, closeStart: 0 });
@@ -156,9 +157,15 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     let faceLm: Point[] | null = null;
     if (hasFace) {
       faceLm = result.faceLandmarks[0].map((lm) => ({ x: lm.x, y: lm.y, z: lm.z ?? 0 }));
-      // Calibrate the neutral-gaze baseline from plausible-neutral frames only
-      calibratorRef.current.update(computeAvgIrisOffset(faceLm, true));
-      raw = classifyEyeGesture(faceLm, { mirrored: true, baseline: calibratorRef.current.value });
+      const rawOff = computeAvgIrisOffset(faceLm, true);
+      const classified = classifyEyeGesture(faceLm, { mirrored: true, baseline: calibratorRef.current.value });
+      // Learn the neutral baseline from neutral frames only — never during a hold.
+      calibratorRef.current.updateGated(rawOff, {
+        isBlinking: !!classified?.isBlinking,
+        activeGesture: classified?.gesture ?? null,
+      });
+      // Hysteresis kills micro-saccade flapping so the smoother sees a stable stream.
+      raw = stabilizerRef.current.filter(classified);
     }
 
     // ── wellness metrics ──
@@ -351,6 +358,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     setPatientMetrics({});
     smootherRef.current.reset();
     calibratorRef.current.reset();
+    stabilizerRef.current.reset();
     restState.current = { transitions: 0, windowStart: 0, cooldownUntil: 0 };
     pauseState.current = { paused: false, closeStart: 0 };
     lastLoggedGesture.current = null;

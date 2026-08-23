@@ -53,6 +53,9 @@ export interface EyeClassifierResult {
   gesture: EyeGesture;
   confidence: number;
   isBlinking: boolean;
+  /** Post-baseline iris offsets (normalized) enabling downstream hysteresis. */
+  dx?: number;
+  dy?: number;
 }
 
 /** Average normalized iris offset for both eyes. */
@@ -78,15 +81,21 @@ export class IrisCalibrator {
   private n = 0;
 
   /**
-   * Outlier-gated update: frames whose offset is far from the current
-   * baseline are treated as deliberate gaze (or noise) and do NOT pull the
-   * neutral estimate — otherwise looking around at startup smears the
-   * baseline and every later glance fires a phantom gesture.
+   * Neutral-only update. After a short bootstrap window (where labels are
+   * unreliable so almost everything is accepted except blinks), calibration
+   * learns ONLY from frames classified as neutral — otherwise a sustained
+   * deliberate gaze would slowly drag the baseline and kill the gesture
+   * mid-hold.
    */
-  update(raw: { x: number; y: number }, maxDelta = 0.15): void {
+  updateGated(
+    raw: { x: number; y: number },
+    ctx: { isBlinking: boolean; activeGesture: string | null }
+  ): void {
+    if (ctx.isBlinking) return;
+    if (this.n >= 40 && ctx.activeGesture) return;
     const dx = raw.x - this.bx;
     const dy = raw.y - this.by;
-    if (this.n >= 10 && Math.sqrt(dx * dx + dy * dy) > maxDelta) return;
+    if (this.n >= 10 && Math.sqrt(dx * dx + dy * dy) > 0.12) return;
     const k = this.n < 90 ? 0.12 : 0.006;
     this.bx += k * dx;
     this.by += k * dy;
@@ -140,16 +149,67 @@ export function classifyEyeGesture(faceLandmarks: Point[], opts: EyeClassifyOpti
 
   if (avgIrisX > GAZE_X_THRESHOLD) {
     // Screen-relative: patient looks toward screen-left => YES
-    return { gesture: "NO", confidence: Math.min(1, avgIrisX / CONF_SCALE), isBlinking: false };
+    return { gesture: "NO", confidence: Math.min(1, avgIrisX / CONF_SCALE), isBlinking: false, dx: avgIrisX, dy: avgIrisY };
   }
   if (avgIrisX < -GAZE_X_THRESHOLD) {
-    return { gesture: "YES", confidence: Math.min(1, Math.abs(avgIrisX) / CONF_SCALE), isBlinking: false };
+    return { gesture: "YES", confidence: Math.min(1, Math.abs(avgIrisX) / CONF_SCALE), isBlinking: false, dx: avgIrisX, dy: avgIrisY };
   }
   if (Math.abs(avgIrisY) > GAZE_Y_THRESHOLD) {
-    return { gesture: "WATER", confidence: Math.min(1, Math.abs(avgIrisY) / CONF_SCALE), isBlinking: false };
+    return { gesture: "WATER", confidence: Math.min(1, Math.abs(avgIrisY) / CONF_SCALE), isBlinking: false, dx: avgIrisX, dy: avgIrisY };
   }
 
-  return { gesture: null, confidence: 0, isBlinking: false };
+  return { gesture: null, confidence: 0, isBlinking: false, dx: avgIrisX, dy: avgIrisY };
+}
+
+type GazeDir = "YES" | "NO" | "WATER";
+
+/**
+ * Schmitt-trigger for gaze direction. Micro-saccades make raw iris offsets
+ * flip sign frame-to-frame near the threshold; a plain majority vote then
+ * restarts its confidence ramp forever and the gesture never announces.
+ * Once entered, a direction is HELD until the offset genuinely relaxes below
+ * the exit band — switching direction requires full-strength counter evidence.
+ */
+export class GazeStabilizer {
+  private active: GazeDir | null = null;
+  private readonly ENTER = 0.055;
+  private readonly EXIT = 0.03;
+
+  filter(r: EyeClassifierResult | null): EyeClassifierResult | null {
+    if (!r || r.isBlinking) return r;
+    const g = r.gesture;
+
+    if (!g || g === "HELP") {
+      // Neutral frame — release a held direction once its offset truly relaxes.
+      if (this.active) {
+        const mag = this.active === "WATER" ? Math.abs(r.dy ?? 0) : Math.abs(r.dx ?? 0);
+        if (mag < this.EXIT) this.active = null;
+      }
+      return r;
+    }
+
+    const dir = g as GazeDir;
+    const mag = dir === "WATER" ? Math.abs(r.dy ?? 0) : Math.abs(r.dx ?? 0);
+
+    if (this.active) {
+      if (mag >= this.EXIT) {
+        if (dir !== this.active && mag >= this.ENTER) this.active = dir; // deliberate switch
+        return { ...r, gesture: this.active };
+      }
+      this.active = null; // gaze truly relaxed
+      return { ...r, gesture: null };
+    }
+
+    if (mag >= this.ENTER) {
+      this.active = dir;
+      return r;
+    }
+    return { ...r, gesture: null }; // weak flicker must not enter the vote
+  }
+
+  reset(): void {
+    this.active = null;
+  }
 }
 
 export class EyeGestureSmoother {
@@ -163,7 +223,7 @@ export class EyeGestureSmoother {
   private blinkHysteresisActive = false;
   private readonly DOUBLE_BLINK_WINDOW = 700;
   private readonly SMOOTHING_FRAMES = 9;
-  private readonly HOLD_TIME_MS = 550;
+  private readonly HOLD_TIME_MS = 430;
   private readonly BLINK_COOLDOWN = 2000;
   private readonly HELP_LOCK_MS = 2000;
   private gazeStartTime = 0;

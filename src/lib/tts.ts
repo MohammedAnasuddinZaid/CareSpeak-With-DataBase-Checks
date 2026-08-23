@@ -126,12 +126,51 @@ interface QueueItem {
   text: string;
   lang: string;
   /** Spoken in English (with an English voice) when the target language has
-   *  no installed voice — guarantees the patient ALWAYS hears something. */
+   *  no installed voice AND remote TTS is unavailable — guarantees the patient
+   *  ALWAYS hears something. */
   fallbackText?: string;
 }
 const queue: QueueItem[] = [];
 let speaking = false;
 const MAX_QUEUE = 4;
+
+/**
+ * Remote TTS for languages whose voice is not installed locally (Windows ships
+ * only en/hi by default). Covers every supported Indian language; used only
+ * while online so offline behaviour degrades to the English local-voice path.
+ */
+function gttsUrl(text: string, lang: string): string {
+  const base = lang.split("-")[0];
+  return (
+    "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&ttsspeed=0.9" +
+    `&tl=${encodeURIComponent(base)}&q=${encodeURIComponent(text.slice(0, 190))}`
+  );
+}
+
+function playRemoteTts(url: string, timeoutMs = 7000): Promise<boolean> {
+  if (typeof Audio === "undefined") return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      audio.onended = null;
+      audio.onerror = null;
+      resolve(ok);
+    };
+    const audio = new Audio(url);
+    const timer = setTimeout(() => done(false), timeoutMs);
+    audio.onended = () => done(true);
+    audio.onerror = () => done(false);
+    try {
+      const p = audio.play();
+      if (p && typeof p.catch === "function") p.catch(() => done(false));
+    } catch {
+      done(false);
+    }
+  });
+}
 
 async function pump(): Promise<void> {
   if (speaking || queue.length === 0 || typeof window === "undefined" || !window.speechSynthesis) return;
@@ -145,9 +184,16 @@ async function pump(): Promise<void> {
     let lang = item.lang;
     let voice = findVoiceForLang(lang);
 
+    // Preferred when the device lacks the language's voice: stream the NATIVE
+    // text from remote neural-quality TTS instead of dropping to English.
+    const online = typeof navigator === "undefined" ? true : navigator.onLine !== false;
+    if (!voice && !lang.toLowerCase().startsWith("en") && online) {
+      const ok = await playRemoteTts(gttsUrl(item.text, item.lang));
+      if (ok) return;
+    }
+
     if (!voice && !lang.toLowerCase().startsWith("en") && item.fallbackText) {
-      // No voice installed for the requested language — never stay silent:
-      // fall back to the English phrasing with an English voice.
+      // No local voice and remote unavailable — never stay silent.
       text = item.fallbackText;
       lang = "en-US";
       voice = findVoiceForLang("en-US");

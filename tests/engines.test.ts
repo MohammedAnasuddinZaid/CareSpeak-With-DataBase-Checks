@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { EyeGestureSmoother, IrisCalibrator, computeAvgIrisOffset, classifyEyeGesture } from "../src/lib/eyeClassifier";
+import { EyeGestureSmoother, GazeStabilizer, IrisCalibrator, computeAvgIrisOffset, classifyEyeGesture } from "../src/lib/eyeClassifier";
 import { evaluateEscalations } from "../src/lib/escalation";
 import { computeRisk } from "../src/lib/risk";
 import type { GestureLogEntry, Point } from "../src/types";
@@ -84,7 +84,8 @@ describe("gaze calibration (regression: only WATER was detected)", () => {
 
   it("calibrated neutral gaze produces no gesture", () => {
     const cal = new IrisCalibrator();
-    for (let i = 0; i < 120; i++) cal.update(computeAvgIrisOffset(makeFace(), true));
+    for (let i = 0; i < 120; i++)
+      cal.updateGated(computeAvgIrisOffset(makeFace(), true), { isBlinking: false, activeGesture: null });
     expect(cal.ready).toBe(true);
     const r = classifyEyeGesture(makeFace(), { mirrored: true, baseline: cal.value });
     expect(r?.gesture).toBeNull();
@@ -92,11 +93,62 @@ describe("gaze calibration (regression: only WATER was detected)", () => {
 
   it("lateral gaze after calibration yields YES with usable confidence", () => {
     const cal = new IrisCalibrator();
-    for (let i = 0; i < 120; i++) cal.update(computeAvgIrisOffset(makeFace(), true));
+    for (let i = 0; i < 120; i++)
+      cal.updateGated(computeAvgIrisOffset(makeFace(), true), { isBlinking: false, activeGesture: null });
     const looking = makeFace(-0.009); // 0.15 eye-widths toward screen-left
     const r = classifyEyeGesture(looking, { mirrored: true, baseline: cal.value });
     expect(r?.gesture).toBe("YES");
     expect(r?.confidence).toBeGreaterThanOrEqual(0.7);
+  });
+
+  it("calibration ignores deliberate gaze frames (no mid-hold drift)", () => {
+    const cal = new IrisCalibrator();
+    // Bootstrap on neutral...
+    for (let i = 0; i < 60; i++)
+      cal.updateGated(computeAvgIrisOffset(makeFace(), true), { isBlinking: false, activeGesture: null });
+    const before = { ...cal.value };
+    // ...then hold a hard left look for many frames — baseline must not move.
+    for (let i = 0; i < 300; i++)
+      cal.updateGated(computeAvgIrisOffset(makeFace(-0.009), true), { isBlinking: false, activeGesture: "YES" });
+    expect(cal.value.x).toBeCloseTo(before.x, 6);
+    expect(cal.value.y).toBeCloseTo(before.y, 6);
+  });
+});
+
+describe("GazeStabilizer (micro-saccade hysteresis)", () => {
+  const res = (dx: number, gesture: "YES" | "NO" | null) =>
+    ({ gesture, confidence: 0.9, isBlinking: false, dx, dy: 0 });
+
+  it("blocks weak flicker from entering", () => {
+    const s = new GazeStabilizer();
+    expect(s.filter(res(-0.02, null)).gesture).toBeNull();
+    expect(s.filter(res(-0.045, "YES")).gesture).toBeNull(); // below ENTER band
+  });
+
+  it("holds the direction through sign-flapping frames", () => {
+    const s = new GazeStabilizer();
+    s.filter(res(-0.07, "YES")); // enter
+    const seq = [-0.04, -0.06, -0.035, -0.08];
+    for (const dx of seq) {
+      const out = s.filter(res(dx, "YES"));
+      expect(out.gesture).toBe("YES");
+    }
+  });
+
+  it("releases only when the offset genuinely relaxes (no ghost re-fire)", () => {
+    const s = new GazeStabilizer();
+    s.filter(res(-0.07, "YES"));
+    expect(s.filter(res(-0.01, null)).gesture).toBeNull(); // released via neutral frame
+    expect(s.filter(res(-0.045, "YES")).gesture).toBeNull(); // ghost blocked after release
+  });
+
+  it("switches direction only on full-strength counter evidence", () => {
+    const s = new GazeStabilizer();
+    s.filter(res(-0.07, "YES"));
+    const switched = s.filter(res(0.08, "NO"));
+    expect(switched.gesture).toBe("NO");
+    expect(s.filter(res(0.04, "NO")).gesture).toBe("NO"); // held through decay band
+    expect(s.filter(res(0.005, null)).gesture).toBeNull(); // then released
   });
 });
 
