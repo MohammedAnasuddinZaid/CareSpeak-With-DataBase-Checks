@@ -4,6 +4,10 @@ import { getSessionStore } from "@/lib/server/store";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const HOT_TICK_MS = 350;    // push cadence right after activity
+const HOT_WINDOW_MS = 8000; // how long fast-polling persists after a change
+const IDLE_TICK_MS = 2200;  // cadence when nothing has happened for a while
+
 /**
  * Server-Sent Events live stream — replaces the old 100ms polling.
  * One persistent connection per dashboard; server pushes only new data.
@@ -20,8 +24,17 @@ export async function GET(request: NextRequest): Promise<Response> {
   let cursor = Number(searchParams.get("since") ?? Date.now() - 60_000);
   const encoder = new TextEncoder();
   let closed = false;
-  let loopTimer: ReturnType<typeof setInterval> | null = null;
+  let loopTimer: ReturnType<typeof setTimeout> | null = null;
   let beatTimer: ReturnType<typeof setInterval> | null = null;
+  // Adaptive cadence: after any data change we tick fast (near-instant push),
+  // then decay to an idle rate to keep serverless/Upstash costs tiny.
+  let hotUntil = 0;
+  let lastSnapshot = "";
+
+  const stopLoop = () => {
+    if (loopTimer) clearTimeout(loopTimer);
+    loopTimer = null;
+  };
 
   const store = await getSessionStore();
 
@@ -38,8 +51,10 @@ export async function GET(request: NextRequest): Promise<Response> {
 
       send("hello", { driver: store.driver, serverTime: Date.now() });
 
+      let ticking = false;
       const tick = async () => {
-        if (closed) return;
+        if (closed || ticking) return scheduleNext();
+        ticking = true;
         try {
           const [entries, metrics, vitals, replies] = await Promise.all([
             store.getEntriesSince(session, cursor),
@@ -47,19 +62,35 @@ export async function GET(request: NextRequest): Promise<Response> {
             store.getVitals(session),
             store.getRepliesSince(session, cursor),
           ]);
+          const snapshot = JSON.stringify({ m: metrics, v: vitals });
           if (entries.length > 0) {
             cursor = Math.max(...entries.map((e) => e.serverTime ?? e.timestamp));
             send("entries", entries);
           }
           if (replies.length > 0) send("replies", replies);
-          send("state", { patientMetrics: metrics, vitals, serverTime: Date.now(), cursor });
+          if (snapshot !== lastSnapshot) {
+            lastSnapshot = snapshot;
+            send("state", { patientMetrics: metrics, vitals, serverTime: Date.now(), cursor });
+          }
+          if (entries.length > 0 || replies.length > 0 ||
+              Object.keys(metrics).length > 0 || Object.keys(vitals).length > 0) {
+            hotUntil = Date.now() + HOT_WINDOW_MS;
+          }
         } catch {
           // transient store error — keep the stream alive
+        } finally {
+          ticking = false;
+          scheduleNext();
         }
       };
 
+      const scheduleNext = () => {
+        if (closed) return;
+        const delay = Date.now() < hotUntil ? HOT_TICK_MS : IDLE_TICK_MS;
+        loopTimer = setTimeout(() => void tick(), delay);
+      };
+
       void tick();
-      loopTimer = setInterval(() => void tick(), 1500);
       beatTimer = setInterval(() => {
         if (!closed) {
           try {
@@ -72,7 +103,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
       request.signal.addEventListener("abort", () => {
         closed = true;
-        if (loopTimer) clearInterval(loopTimer);
+        stopLoop();
         if (beatTimer) clearInterval(beatTimer);
         try {
           controller.close();
@@ -81,7 +112,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     },
     cancel() {
       closed = true;
-      if (loopTimer) clearInterval(loopTimer);
+      stopLoop();
       if (beatTimer) clearInterval(beatTimer);
     },
   });

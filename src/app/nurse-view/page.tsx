@@ -19,7 +19,7 @@ import {
   Radio,
 } from "lucide-react";
 import { GestureLogEntry, ESCALATION_RULES } from "@/types";
-import { getSession, setSessionId } from "@/lib/session";
+import { getSession, setSessionId, clearSession } from "@/lib/session";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { evaluateEscalations } from "@/lib/escalation";
 import {
@@ -71,19 +71,19 @@ export default function NurseViewPage() {
     onAlert: handleAlert,
   });
 
-  /* ── pairing (QR auto-pair via ?session=) ── */
+  /* ── pairing: ?session= QR param ALWAYS wins over any stale saved session ── */
   useEffect(() => {
-    const existing = getSession();
-    if (existing?.sessionId) {
-      setSessionInput(existing.sessionId);
+    const urlSession = new URLSearchParams(window.location.search).get("session");
+    if (urlSession && /^[A-Z0-9_-]{3,32}$/.test(urlSession.trim().toUpperCase())) {
+      const id = urlSession.trim().toUpperCase();
+      setSessionId(id); // overwrite stale pairing in localStorage
+      setSessionInput(id);
       setPaired(true);
       return;
     }
-    const urlSession = new URLSearchParams(window.location.search).get("session");
-    if (urlSession && urlSession.length >= 3) {
-      const id = urlSession.toUpperCase();
-      setSessionId(id);
-      setSessionInput(id);
+    const existing = getSession();
+    if (existing?.sessionId) {
+      setSessionInput(existing.sessionId);
       setPaired(true);
     }
   }, []);
@@ -332,6 +332,19 @@ export default function NurseViewPage() {
             {statusText}
             <span className="text-[#9ca3af]">· session {sessionInput}</span>
             <Radio className="w-3.5 h-3.5 ml-1 text-[#9ca3af]" aria-hidden />
+            <button
+              onClick={() => {
+                clearSession();
+                setPaired(false);
+                setLog([]);
+                setAutoNotes([]);
+                setSessionInput("");
+              }}
+              className="ml-1 px-2 py-0.5 rounded-lg bg-white/70 hover:bg-white text-[#6e6e6e] hover:text-[#c63a22] border border-[#ececec] transition-all"
+              title="Pair with a different session"
+            >
+              Switch
+            </button>
           </div>
         )}
 
