@@ -222,13 +222,11 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
       const threshold = Date.now() < restState.current.cooldownUntil ? 0.85 : 0.7;
       if (smoothed.gesture && smoothed.confidence > threshold) {
         const entry = EYE_GESTURE_MAP[smoothed.gesture];
-        if (entry) {
+        if (entry && smoothed.gesture !== lastLoggedGesture.current) {
+          lastLoggedGesture.current = smoothed.gesture;
           voiceAlert.speak(smoothed.gesture, "eye");
-          if (smoothed.gesture !== lastLoggedGesture.current) {
-            lastLoggedGesture.current = smoothed.gesture;
-            if (onGesture) onGesture(smoothed.gesture, entry.description, smoothed.confidence);
-            else addGestureLog(smoothed.gesture, entry.description, smoothed.confidence, "eye", voiceAlert.getLanguage());
-          }
+          if (onGesture) onGesture(smoothed.gesture, entry.description, smoothed.confidence);
+          else addGestureLog(smoothed.gesture, entry.description, smoothed.confidence, "eye", voiceAlert.getLanguage());
         }
       }
 

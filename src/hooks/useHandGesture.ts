@@ -205,13 +205,11 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
       const threshold = Date.now() < restState.current.cooldownUntil ? 0.85 : 0.7;
       if (smoothed.gesture && smoothed.confidence > threshold) {
         const entry = HAND_GESTURE_MAP[smoothed.gesture];
-        if (entry) {
+        if (entry && smoothed.gesture !== lastLoggedGesture.current) {
+          lastLoggedGesture.current = smoothed.gesture;
           voiceAlert.speak(smoothed.gesture, "hand");
-          if (smoothed.gesture !== lastLoggedGesture.current) {
-            lastLoggedGesture.current = smoothed.gesture;
-            if (onGesture) onGesture(smoothed.gesture, entry.description, smoothed.confidence);
-            else addGestureLog(smoothed.gesture, entry.description, smoothed.confidence, "hand", voiceAlert.getLanguage());
-          }
+          if (onGesture) onGesture(smoothed.gesture, entry.description, smoothed.confidence);
+          else addGestureLog(smoothed.gesture, entry.description, smoothed.confidence, "hand", voiceAlert.getLanguage());
         }
       }
 
