@@ -81,6 +81,16 @@ describe("handClassifier", () => {
     expect(r?.gesture).toBe("NO");
   });
 
+  it("detects NO when the thumb foreshortens toward the camera (regression)", () => {
+    // Real-world failure: thumb angled into the screen -> small y-delta.
+    // Palm-size-relative thresholds + wrist cue must still classify NO.
+    const h = makeHand({ thumbDown: false });
+    h.landmarks[4] = pt(0.452, 0.88); // shallow-angle thumb: 40% less vertical travel than a full thumbs-down
+    h.landmarks[3] = pt(0.448, 0.80);
+    const r = classifyHandGesture([h]);
+    expect(r?.gesture).toBe("NO");
+  });
+
   it("detects index+pinky as HELP", () => {
     const r = classifyHandGesture([makeHand({ index: 1, pinky: 1 })]);
     expect(r?.gesture).toBe("HELP");

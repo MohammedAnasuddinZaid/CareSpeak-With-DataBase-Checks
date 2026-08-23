@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
-import { classifyEyeGesture, EyeGestureSmoother } from "@/lib/eyeClassifier";
+import { classifyEyeGesture, EyeGestureSmoother, IrisCalibrator, computeAvgIrisOffset } from "@/lib/eyeClassifier";
 import { voiceAlert } from "@/lib/tts";
 import { addGestureLog } from "@/lib/gestureLog";
 import { EyeGesture, EYE_GESTURE_MAP, PatientMetrics, Point } from "@/types";
@@ -14,7 +14,7 @@ const MODEL_URL =
 const CLUTCH_CLOSE_MS = 5000;
 const RESTING_WINDOW_MS = 10000;
 const RESTING_THRESHOLD = 5;
-const RESTING_COOLDOWN_MS = 30000;
+const RESTING_COOLDOWN_MS = 20000;
 
 function dist(a: Point, b: Point): number {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
@@ -39,6 +39,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
   const streamRef = useRef<MediaStream | null>(null);
   const runningRef = useRef(false);
   const smootherRef = useRef(new EyeGestureSmoother());
+  const calibratorRef = useRef(new IrisCalibrator());
   const lastLoggedGesture = useRef<string | null>(null);
   const restState = useRef({ transitions: 0, windowStart: 0, cooldownUntil: 0 });
   const pauseState = useRef({ paused: false, closeStart: 0 });
@@ -102,9 +103,9 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     try {
       const wasm = await FilesetResolver.forVisionTasks(WASM_URL);
       const landmarker = await FaceLandmarker.createFromOptions(wasm, {
-        baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+        baseOptions: { modelAssetPath: MODEL_URL },
         runningMode: "VIDEO",
-        outputFaceBlendshapes: false,
+        outputFaceBlendshapes: true,
         minFaceDetectionConfidence: 0.5,
         minTrackingConfidence: 0.5,
       });
@@ -155,7 +156,9 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     let faceLm: Point[] | null = null;
     if (hasFace) {
       faceLm = result.faceLandmarks[0].map((lm) => ({ x: lm.x, y: lm.y, z: lm.z ?? 0 }));
-      raw = classifyEyeGesture(faceLm, { mirrored: true });
+      // Calibrate the neutral-gaze baseline every frame (fast lock-on, slow drift)
+      calibratorRef.current.update(computeAvgIrisOffset(faceLm, true));
+      raw = classifyEyeGesture(faceLm, { mirrored: true, baseline: calibratorRef.current.value });
     }
 
     // ── wellness metrics ──
@@ -349,6 +352,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     setIsPaused(false);
     setPatientMetrics({});
     smootherRef.current.reset();
+    calibratorRef.current.reset();
     restState.current = { transitions: 0, windowStart: 0, cooldownUntil: 0 };
     pauseState.current = { paused: false, closeStart: 0 };
     lastLoggedGesture.current = null;

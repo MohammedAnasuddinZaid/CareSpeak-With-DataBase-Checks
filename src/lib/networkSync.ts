@@ -56,6 +56,9 @@ export class NetworkSync {
   private status: ConnStatus = "disconnected";
   private transport: Transport = "none";
   private destroyed = false;
+  private lastInboundAt = Date.now();
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private sseSilentStrikes = 0;
 
   constructor(cfg: NetworkSyncConfig) {
     this.cfg = cfg;
@@ -76,7 +79,9 @@ export class NetworkSync {
   connect(): void {
     if (this.destroyed) return;
     this.cursor = Date.now() - 60_000;
+    this.lastInboundAt = Date.now();
     void this.openSse();
+    this.startWatchdog();
   }
 
   destroy(): void {
@@ -85,6 +90,8 @@ export class NetworkSync {
     this.stopPolling();
     if (this.retryTimer) clearTimeout(this.retryTimer);
     if (this.graceTimer) clearTimeout(this.graceTimer);
+    if (this.watchdogTimer) clearInterval(this.watchdogTimer);
+    this.watchdogTimer = null;
     if (typeof window !== "undefined") window.removeEventListener("online", this.onlineHandler);
     try {
       this.bc?.close();
@@ -106,16 +113,26 @@ export class NetworkSync {
         this.failures = 0;
         this.pollInterval = POLL_INTERVAL_MS;
         this.stopPolling();
+        if (this.retryTimer) {
+          clearTimeout(this.retryTimer);
+          this.retryTimer = null;
+        }
+        this.sseSilentStrikes = 0;
+        this.lastInboundAt = Date.now();
         this.setStatus("connected", "sse");
         void this.flushOutbox();
         if (this.graceTimer) clearTimeout(this.graceTimer);
       });
 
-      es.addEventListener("hello", () => this.setStatus("connected", "sse"));
+      es.addEventListener("hello", () => {
+        this.markInbound();
+        this.setStatus("connected", "sse");
+      });
 
       es.addEventListener("entries", (ev) => {
         try {
           const entries = JSON.parse((ev as MessageEvent).data) as StoredEntry[];
+          this.markInbound();
           this.ingestEntries(entries);
         } catch {}
       });
@@ -127,6 +144,7 @@ export class NetworkSync {
             vitals: Record<string, DeviceVitals>;
             serverTime: number;
           };
+          this.markInbound();
           if (Object.keys(data.patientMetrics ?? {}).length > 0) this.cfg.onMetrics?.(data.patientMetrics);
           if (Object.keys(data.vitals ?? {}).length > 0) this.cfg.onVitals?.(data.vitals);
           this.setStatus("connected", "sse");
@@ -136,6 +154,7 @@ export class NetworkSync {
       es.addEventListener("replies", (ev) => {
         try {
           const replies = JSON.parse((ev as MessageEvent).data) as NurseReply[];
+          this.markInbound();
           for (const r of replies) this.cfg.onReply?.(r);
         } catch {}
       });
@@ -207,9 +226,42 @@ export class NetworkSync {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => {
       void this.pollOnce().then(() => {
-        if (!this.pollTimer && !this.destroyed) this.pollTimer = setInterval(() => void this.pollOnce(), this.pollInterval);
+        if (!this.pollTimer && !this.destroyed && !this.es) {
+          this.pollTimer = setInterval(() => void this.pollOnce(), this.pollInterval);
+        }
       });
     }, 50);
+  }
+
+  /**
+   * Self-heal: if SSE claims to be connected but delivers nothing (buffering
+   * proxy, half-open socket), force a poll immediately and degrade to polling
+   * permanently after repeated silent stretches.
+   */
+  private startWatchdog(): void {
+    if (this.watchdogTimer || typeof window === "undefined") return;
+    this.watchdogTimer = setInterval(() => {
+      if (this.destroyed || this.transport !== "sse") {
+        if (this.transport !== "sse") this.sseSilentStrikes = 0;
+        return;
+      }
+      if (Date.now() - this.lastInboundAt < 8000) {
+        this.sseSilentStrikes = 0;
+        return;
+      }
+      this.sseSilentStrikes++;
+      void this.pollOnce();
+      if (this.sseSilentStrikes >= 2) {
+        this.closeSse();
+        this.startPolling();
+        this.sseSilentStrikes = 0;
+      }
+    }, 5000);
+  }
+
+  private markInbound(): void {
+    this.lastInboundAt = Date.now();
+    this.sseSilentStrikes = 0;
   }
 
   private async pollOnce(): Promise<void> {
@@ -226,6 +278,7 @@ export class NetworkSync {
       };
       this.failures = 0;
       this.pollInterval = POLL_INTERVAL_MS;
+      this.markInbound();
       this.setStatus("connected", this.es ? "sse" : "poll");
       this.ingestEntries(data.entries ?? []);
       if (Object.keys(data.patientMetrics ?? {}).length > 0) this.cfg.onMetrics?.(data.patientMetrics);

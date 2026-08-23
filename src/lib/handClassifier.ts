@@ -45,12 +45,19 @@ export function getFingerRatios(landmarks: Point[]): number[] {
 }
 
 function getThumbState(landmarks: Point[]): { extended: boolean; up: boolean; down: boolean } {
+  const hs = handSize(landmarks);
   const tipDist = dist(landmarks[THUMB_TIP], landmarks[THUMB_MCP]);
   const ipDist = dist(landmarks[THUMB_IP], landmarks[THUMB_MCP]);
-  const extended = ipDist > 0 && tipDist > ipDist * 1.05;
-  const yDiff = landmarks[THUMB_MCP].y - landmarks[THUMB_TIP].y;
-  const up = yDiff > 0.005;
-  const down = yDiff < -0.005;
+  // 1.02 tolerates mild foreshortening when the thumb angles toward the camera
+  const extended = ipDist > 0 && tipDist > ipDist * 1.02;
+  // Direction relative to PALM SIZE — absolute pixel deltas fail when the
+  // thumb points partly into/out of the screen (classic thumbs-down failure).
+  const dy = landmarks[THUMB_MCP].y - landmarks[THUMB_TIP].y;
+  const up = hs > 1e-6 && dy > hs * 0.28;
+  const down =
+    hs > 1e-6 &&
+    (-dy > hs * 0.28 ||
+      landmarks[THUMB_TIP].y - landmarks[WRIST].y > hs * 0.55);
   return { extended, up, down };
 }
 

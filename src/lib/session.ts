@@ -86,7 +86,32 @@ export function getSession(): SessionInfo | null {
   return null;
 }
 
+const ORIGIN_KEY = "carespeak_dashboard_origin";
+
+/**
+ * Origin used inside pairing URLs / QR codes. Defaults to the current origin,
+ * but when the patient device is on localhost the QR would be useless for
+ * other devices — the user can persist a reachable origin (e.g. http://192.168.1.5:3000).
+ */
+export function getDashboardOrigin(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const saved = localStorage.getItem(ORIGIN_KEY);
+    if (saved && /^https?:\/\//.test(saved)) return saved.replace(/\/+$/, "");
+  } catch {}
+  return window.location.origin;
+}
+
+export function setDashboardOrigin(origin: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const clean = origin.trim().replace(/\/+$/, "");
+    if (clean && /^https?:\/\//.test(clean)) localStorage.setItem(ORIGIN_KEY, clean);
+    else localStorage.removeItem(ORIGIN_KEY);
+  } catch {}
+}
+
 export function getNurseDashboardUrl(sessionId: string): string {
   if (typeof window === "undefined") return "";
-  return `${window.location.origin}/nurse-view?session=${sessionId}`;
+  return `${getDashboardOrigin()}/nurse-view?session=${sessionId}`;
 }

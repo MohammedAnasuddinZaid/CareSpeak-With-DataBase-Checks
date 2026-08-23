@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { QrCode, Copy, Check, Smartphone } from "lucide-react";
-import { getNurseDashboardUrl } from "@/lib/session";
+import { QrCode, Copy, Check, Smartphone, Pencil } from "lucide-react";
+import { getNurseDashboardUrl, getDashboardOrigin, setDashboardOrigin } from "@/lib/session";
 import QRCode from "qrcode";
 
 interface QRPairingDisplayProps {
@@ -14,31 +14,44 @@ interface QRPairingDisplayProps {
 export default function QRPairingDisplay({ sessionId, compact = false }: QRPairingDisplayProps) {
   const [qrDataUrl, setQrDataUrl] = useState<string>("");
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [originDraft, setOriginDraft] = useState("");
+  const [origin, setOrigin] = useState("");
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    const url = getNurseDashboardUrl(sessionId);
-    if (url) {
-      QRCode.toDataURL(url, {
-        width: compact ? 160 : 280,
-        margin: 1,
-        color: { dark: "#1f1f1f", light: "#ffffff" },
-      }).then(setQrDataUrl).catch(() => {});
-    }
-  }, [sessionId, compact]);
+    setOrigin(getDashboardOrigin());
+  }, []);
+
+  useEffect(() => {
+    if (!origin) return;
+    const url = `${origin.replace(/\/+$/, "")}/nurse-view?session=${sessionId}`;
+    QRCode.toDataURL(url, {
+      width: compact ? 160 : 280,
+      margin: 1,
+      color: { dark: "#1f1f1f", light: "#ffffff" },
+    }).then(setQrDataUrl).catch(() => {});
+  }, [sessionId, compact, origin]);
+
+  const dashboardUrl = origin ? `${origin.replace(/\/+$/, "")}/nurse-view?session=${sessionId}` : "";
+
+  const saveOrigin = () => {
+    setDashboardOrigin(originDraft);
+    setOrigin(getDashboardOrigin());
+    setEditing(false);
+  };
 
   const handleCopy = async () => {
-    const url = getNurseDashboardUrl(sessionId);
-    if (url) {
-      try {
-        await navigator.clipboard.writeText(url);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {}
-    }
+    if (!dashboardUrl) return;
+    try {
+      await navigator.clipboard.writeText(dashboardUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
   };
 
   if (compact) {
+    const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(origin);
     return (
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
@@ -56,6 +69,12 @@ export default function QRPairingDisplay({ sessionId, compact = false }: QRPairi
           <div className="min-w-0 flex-1">
             <p className="text-xs text-[#6e6e6e] mb-1">Session ID — share with nurse</p>
             <p className="text-lg font-bold text-[#1f1f1f] tracking-widest font-mono">{sessionId}</p>
+            {isLocalhost && (
+              <button onClick={() => { setOriginDraft(origin); setEditing(true); }}
+                className="mt-1 inline-flex items-center gap-1 text-[11px] text-[#c63a22] hover:underline">
+                <Pencil className="w-3 h-3" /> Phone can&apos;t connect? Set your PC&apos;s IP
+              </button>
+            )}
           </div>
           <button
             onClick={handleCopy}
@@ -64,6 +83,29 @@ export default function QRPairingDisplay({ sessionId, compact = false }: QRPairi
             {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
           </button>
         </div>
+        <AnimatePresence>
+          {editing && (
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+              <div className="mt-3 pt-3 border-t border-[#ececec]">
+                <label className="text-[11px] font-medium text-[#6e6e6e]" htmlFor="origin-edit">
+                  Dashboard address phones should open (run `ipconfig` → IPv4 address):
+                </label>
+                <div className="flex gap-2 mt-1.5">
+                  <input id="origin-edit" value={originDraft}
+                    onChange={(e) => setOriginDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") saveOrigin(); }}
+                    placeholder="http://192.168.1.5:3000"
+                    className="input flex-1 text-xs font-mono" />
+                  <button onClick={saveOrigin} disabled={!/^https?:\/\//.test(originDraft.trim())}
+                    className="btn-primary px-3 py-1.5 text-xs disabled:opacity-40">Save</button>
+                </div>
+                <p className="text-[10px] text-[#9ca3af] mt-1.5">
+                  The QR updates instantly. Phone and PC must be on the same WiFi network.
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
     );
   }

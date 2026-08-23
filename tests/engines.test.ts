@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { EyeGestureSmoother } from "../src/lib/eyeClassifier";
+import { EyeGestureSmoother, IrisCalibrator, computeAvgIrisOffset, classifyEyeGesture } from "../src/lib/eyeClassifier";
 import { evaluateEscalations } from "../src/lib/escalation";
 import { computeRisk } from "../src/lib/risk";
 import type { GestureLogEntry, Point } from "../src/types";
@@ -55,6 +55,48 @@ describe("EyeGestureSmoother", () => {
     for (let i = 0; i < 3; i++) a.push({ gesture: null, confidence: 0, isBlinking: true });
     a.reset();
     expect(b.push(null).gesture).toBeNull();
+  });
+});
+
+describe("gaze calibration (regression: only WATER was detected)", () => {
+  const pt = (x: number, y: number): Point => ({ x, y, z: 0 });
+
+  /** 478-landmark face with eyes open, mouth closed, and a realistic
+   *  downward iris bias of +0.12 eye-widths when looking straight ahead. */
+  function makeFace(irisShiftX = 0): Point[] {
+    const lm: Point[] = new Array(478).fill(null).map(() => pt(0.5, 0.5));
+    lm[33] = pt(0.40, 0.40); lm[133] = pt(0.46, 0.40);   // left eye corners
+    lm[362] = pt(0.54, 0.40); lm[263] = pt(0.60, 0.40);  // right eye corners
+    lm[159] = pt(0.43, 0.385); lm[145] = pt(0.43, 0.415); // left lids
+    lm[386] = pt(0.57, 0.385); lm[374] = pt(0.57, 0.415); // right lids
+    const biasY = 0.12 * 0.06;
+    lm[468] = pt(0.43 + irisShiftX, 0.40 + biasY); // left iris
+    lm[473] = pt(0.57 + irisShiftX, 0.40 + biasY); // right iris
+    lm[13] = pt(0.50, 0.50); lm[14] = pt(0.50, 0.508);    // lips closed
+    lm[168] = pt(0.50, 0.35); lm[152] = pt(0.50, 0.75);   // nose bridge / chin
+    return lm;
+  }
+
+  it("uncalibrated vertical bias masquerades as WATER (documents the old bug)", () => {
+    const r = classifyEyeGesture(makeFace(), { mirrored: true });
+    expect(r?.gesture).toBe("WATER");
+  });
+
+  it("calibrated neutral gaze produces no gesture", () => {
+    const cal = new IrisCalibrator();
+    for (let i = 0; i < 120; i++) cal.update(computeAvgIrisOffset(makeFace(), true));
+    expect(cal.ready).toBe(true);
+    const r = classifyEyeGesture(makeFace(), { mirrored: true, baseline: cal.value });
+    expect(r?.gesture).toBeNull();
+  });
+
+  it("lateral gaze after calibration yields YES with usable confidence", () => {
+    const cal = new IrisCalibrator();
+    for (let i = 0; i < 120; i++) cal.update(computeAvgIrisOffset(makeFace(), true));
+    const looking = makeFace(-0.009); // 0.15 eye-widths toward screen-left
+    const r = classifyEyeGesture(looking, { mirrored: true, baseline: cal.value });
+    expect(r?.gesture).toBe("YES");
+    expect(r?.confidence).toBeGreaterThanOrEqual(0.7);
   });
 });
 

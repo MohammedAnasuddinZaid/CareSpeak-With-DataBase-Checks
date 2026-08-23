@@ -22,7 +22,7 @@ const CLUTCH_OPEN_MS = 5000;
 const PALM_HOLD_WATER_MS = 2000;
 const RESTING_WINDOW_MS = 10000;
 const RESTING_THRESHOLD = 5;
-const RESTING_COOLDOWN_MS = 30000;
+const RESTING_COOLDOWN_MS = 20000;
 
 function dist(a: Point, b: Point): number {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
@@ -85,7 +85,7 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
     try {
       const wasm = await FilesetResolver.forVisionTasks(WASM_URL);
       const landmarker = await HandLandmarker.createFromOptions(wasm, {
-        baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+        baseOptions: { modelAssetPath: MODEL_URL },
         runningMode: "VIDEO",
         numHands: 2,
         minHandDetectionConfidence: 0.7,
