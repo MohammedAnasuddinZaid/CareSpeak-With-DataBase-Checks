@@ -18,7 +18,7 @@ export default function NurseReplyBanner({ reply }: { reply: NurseReply | null }
   const spokenId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!reply) return;
+    if (!reply || reply.text.startsWith("[PAIN]")) return; // pain requests render as their own overlay
     setVisible(true);
     if (spokenId.current !== reply.id) {
       spokenId.current = reply.id;
@@ -28,6 +28,8 @@ export default function NurseReplyBanner({ reply }: { reply: NurseReply | null }
     const t = setTimeout(() => setVisible(false), VISIBLE_MS);
     return () => clearTimeout(t);
   }, [reply]);
+
+  if (reply?.text.startsWith("[PAIN]")) return null;
 
   return (
     <AnimatePresence>

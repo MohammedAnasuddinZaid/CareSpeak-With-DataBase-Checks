@@ -22,6 +22,7 @@ syncing for low-connectivity wards, and a ₹1,100 IoT wearable for vitals & SOS
 | Languages | English only | **10 Indian languages** incl. Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati, Kannada, Malayalam, Punjabi |
 | Hardware | None | **ESP32 wearable**: HR/SpO₂ vitals + physical SOS button wired into the same console |
 | Clinical output | Nothing | **Auto-generated printable shift report** (`/report`) + CSV/JSON export |
+| Ward scale | Single patient | **Ward view** (`/ward`), siren + system notifications, 60s no-ack escalation chain, gaze-driven pain scale, and a Holt **deterioration trajectory** forecast |
 
 ## How the AI works (all client-side)
 
@@ -76,6 +77,7 @@ npm run build      # production build
 | `/hand-mode` | Patient gesture console — hand tracking + TTS |
 | `/eye-mode` | Patient gesture console — gaze/blink/mouth tracking |
 | `/nurse-view` | Clinician console: live alerts, risk ring, charts, replies, escalation log, IoT vitals |
+| `/ward` | **Multi-patient ward overview** — every active session as a risk-banded tile on one screen |
 | `/cctv` | Point any IP/phone camera at the patient for remote detection |
 | `/logs` | History, analytics dashboard, CSV/JSON export |
 | `/report` | Print-ready clinical shift summary (Ctrl+P → PDF) |

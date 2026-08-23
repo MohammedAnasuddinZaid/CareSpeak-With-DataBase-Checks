@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Eye, RotateCcw, Camera, StopCircle, Pause, ArrowLeft, ArrowRight,
@@ -17,6 +17,7 @@ import CompanionMessageInput from "@/components/CompanionMessageInput";
 import DemoModeControls from "@/components/DemoModeControls";
 import PatientMetricsCard from "@/components/PatientMetricsCard";
 import NurseReplyBanner from "@/components/NurseReplyBanner";
+import PainScaleOverlay from "@/components/PainScaleOverlay";
 
 const GESTURE_GUIDE = [
   { label: "YES", desc: "Look Left", icon: ArrowLeft },
@@ -51,6 +52,29 @@ export default function EyeModePage() {
     videoRef, canvasRef, gesture, confidence, loading, error, cameraOn,
     faceDetected, isPaused, patientMetrics, startCamera, stopCamera,
   } = useEyeGesture({ onGesture: broadcast });
+
+  /* ── pain scale (gaze-driven; rides the existing gesture stream untouched) ── */
+  const [pain, setPain] = useState({ active: false, value: 0 });
+  const painReqConsumed = useRef<string | null>(null);
+  useEffect(() => {
+    if (latestReply?.text === "[PAIN]" && latestReply.id !== painReqConsumed.current) {
+      painReqConsumed.current = latestReply.id;
+      setPain({ active: true, value: 0 });
+    }
+  }, [latestReply]);
+
+  const handlePainConfirm = useCallback(
+    (level: number) => {
+      voiceAlert.speakDirect(`Pain level ${level} out of ten. The nurse has been informed.`);
+      sendReply(`🩸 PAIN LEVEL: ${level}/10`, "Patient");
+      setTimeout(() => setPain({ active: false, value: 0 }), 1200);
+    },
+    [sendReply]
+  );
+  const handlePainCancel = useCallback(() => {
+    voiceAlert.speakDirect("Pain check closed.");
+    setPain({ active: false, value: 0 });
+  }, []);
 
   const latestMetrics = useRef(patientMetrics);
   latestMetrics.current = patientMetrics;
@@ -92,6 +116,14 @@ export default function EyeModePage() {
             </div>
             <div className="flex items-center gap-3">
               <DemoModeControls onSimulateGesture={simulate} gestureType="eye" />
+              <button
+                onClick={() => setPain({ active: true, value: 0 })}
+                disabled={!cameraOn}
+                title="Gaze-driven pain scale (works best with camera on)"
+                className="btn-secondary px-4 py-2.5 text-sm disabled:opacity-40"
+              >
+                🩺 Pain check
+              </button>
               {cameraOn && (
                 <button onClick={stopCamera} className="btn-danger flex items-center gap-2 px-4 py-2.5 text-sm">
                   <StopCircle className="w-4 h-4" /> Stop Camera
@@ -103,7 +135,14 @@ export default function EyeModePage() {
 
         <QRPairingDisplay sessionId={sessionId} compact />
         <CompanionMessageInput onSend={sendCompanionNote} />
-        <NurseReplyBanner reply={latestReply} />
+        <NurseReplyBanner reply={latestReply?.text?.startsWith("[PAIN]") ? null : latestReply} />
+        <PainScaleOverlay
+          state={pain}
+          gesture={cameraOn ? gesture : null}
+          onConfirm={handlePainConfirm}
+          onCancel={handlePainCancel}
+          onChange={setPain}
+        />
 
         <AnimatePresence>
           {error && (

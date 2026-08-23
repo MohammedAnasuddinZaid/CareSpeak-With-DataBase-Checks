@@ -23,10 +23,14 @@ export interface SessionStore {
   getVitals(session: string): Promise<Record<string, DeviceVitals>>;
   setReply(session: string, reply: NurseReply): Promise<void>;
   getRepliesSince(session: string, since: number): Promise<NurseReply[]>;
+  /** Registry of recently-active sessions (for the multi-patient ward view). */
+  getActiveSessions(): Promise<{ session: string; lastSeen: number }[]>;
 }
 
 const MAX_ENTRIES = 2000;
 const TTL_MS = 60 * 60 * 1000;
+/** Redis key lifetime — matches MemoryDriver's prune window (leak fix). */
+const REDIS_TTL_SECONDS = 60 * 60;
 
 class MemoryDriver implements SessionStore {
   readonly driver = "memory" as const;
@@ -34,6 +38,7 @@ class MemoryDriver implements SessionStore {
   private metrics = new Map<string, Map<string, PatientMetrics>>();
   private vitals = new Map<string, Map<string, DeviceVitals>>();
   private replies = new Map<string, NurseReply[]>();
+  private registry = new Map<string, number>();
   private lastPrune = 0;
 
   constructor() {
@@ -55,6 +60,19 @@ class MemoryDriver implements SessionStore {
       if (next.length === 0) this.replies.delete(k);
       else this.replies.set(k, next);
     }
+    for (const [k, seen] of this.registry) {
+      if (seen < cutoff) this.registry.delete(k);
+    }
+  }
+
+  private touch(session: string): void {
+    this.registry.set(session, Date.now());
+  }
+
+  async getActiveSessions(): Promise<{ session: string; lastSeen: number }[]> {
+    return [...this.registry.entries()]
+      .map(([session, lastSeen]) => ({ session, lastSeen }))
+      .sort((a, b) => b.lastSeen - a.lastSeen);
   }
 
   private maybePrune(now: number) {
@@ -75,6 +93,7 @@ class MemoryDriver implements SessionStore {
     else list.push(stored);
     if (list.length > MAX_ENTRIES) list.splice(0, list.length - MAX_ENTRIES);
     this.entries.set(session, list);
+    this.touch(session);
     return stored;
   }
 
@@ -96,6 +115,7 @@ class MemoryDriver implements SessionStore {
     const m = this.metrics.get(session) ?? new Map();
     m.set(deviceId, { ...metrics, lastSeen: new Date().toISOString() });
     this.metrics.set(session, m);
+    this.touch(session);
   }
 
   async getMetrics(session: string): Promise<Record<string, PatientMetrics>> {
@@ -106,6 +126,7 @@ class MemoryDriver implements SessionStore {
     const v = this.vitals.get(session) ?? new Map();
     v.set(vitals.deviceId, { ...vitals, receivedAt: Date.now() });
     this.vitals.set(session, v);
+    this.touch(session);
   }
 
   async getVitals(session: string): Promise<Record<string, DeviceVitals>> {
@@ -117,6 +138,7 @@ class MemoryDriver implements SessionStore {
     list.push(reply);
     if (list.length > 50) list.splice(0, list.length - 50);
     this.replies.set(session, list);
+    this.touch(session);
   }
 
   async getRepliesSince(session: string, since: number): Promise<NurseReply[]> {
@@ -134,6 +156,7 @@ type RedisLike = {
   ) => Promise<string[]>;
   hset: (key: string, values: Record<string, unknown>) => Promise<unknown>;
   hgetall: (key: string) => Promise<Record<string, unknown>>;
+  expire: (key: string, seconds: number) => Promise<unknown>;
 };
 
 function redisKey(session: string): { entries: string; metrics: string; vitals: string; replies: string } {
@@ -144,6 +167,8 @@ function redisKey(session: string): { entries: string; metrics: string; vitals: 
     replies: `cs:${session}:replies`,
   };
 }
+
+const REGISTRY_KEY = "cs:registry"; // hash: session -> lastSeen(ms); powers /api/ward
 
 async function createRedisDriver(): Promise<SessionStore> {
   const mod = await import("@upstash/redis");
@@ -159,7 +184,10 @@ async function createRedisDriver(): Promise<SessionStore> {
     async appendEntry(session: string, entry: Omit<GestureLogEntry, "serverTime">): Promise<StoredEntry> {
       const now = Date.now();
       const stored: StoredEntry = { ...entry, serverTime: now, status: "none" };
-      await redis.zadd(redisKey(session).entries, { score: now, member: JSON.stringify(stored) });
+      const k = redisKey(session);
+      await redis.zadd(k.entries, { score: now, member: JSON.stringify(stored) });
+      await redis.expire(k.entries, REDIS_TTL_SECONDS);
+      void redis.hset(REGISTRY_KEY, { [session]: String(now) });
       return stored;
     }
 
@@ -193,7 +221,10 @@ async function createRedisDriver(): Promise<SessionStore> {
     }
 
     async setMetrics(session: string, deviceId: string, metrics: PatientMetrics): Promise<void> {
-      await redis.hset(redisKey(session).metrics, { [deviceId]: JSON.stringify({ ...metrics, lastSeen: new Date().toISOString() }) });
+      const k = redisKey(session).metrics;
+      await redis.hset(k, { [deviceId]: JSON.stringify({ ...metrics, lastSeen: new Date().toISOString() }) });
+      await redis.expire(k, REDIS_TTL_SECONDS);
+      void redis.hset(REGISTRY_KEY, { [session]: String(Date.now()) });
     }
 
     async getMetrics(session: string): Promise<Record<string, PatientMetrics>> {
@@ -208,7 +239,10 @@ async function createRedisDriver(): Promise<SessionStore> {
     }
 
     async setVitals(session: string, vitals: DeviceVitals): Promise<void> {
-      await redis.hset(redisKey(session).vitals, { [vitals.deviceId]: JSON.stringify({ ...vitals, receivedAt: Date.now() }) });
+      const k = redisKey(session).vitals;
+      await redis.hset(k, { [vitals.deviceId]: JSON.stringify({ ...vitals, receivedAt: Date.now() }) });
+      await redis.expire(k, REDIS_TTL_SECONDS);
+      void redis.hset(REGISTRY_KEY, { [session]: String(Date.now()) });
     }
 
     async getVitals(session: string): Promise<Record<string, DeviceVitals>> {
@@ -223,7 +257,20 @@ async function createRedisDriver(): Promise<SessionStore> {
     }
 
     async setReply(session: string, reply: NurseReply): Promise<void> {
-      await redis.zadd(redisKey(session).replies, { score: reply.timestamp, member: JSON.stringify(reply) });
+      const k = redisKey(session).replies;
+      await redis.zadd(k, { score: reply.timestamp, member: JSON.stringify(reply) });
+      await redis.expire(k, REDIS_TTL_SECONDS);
+      void redis.hset(REGISTRY_KEY, { [session]: String(Date.now()) });
+    }
+
+    async getActiveSessions(): Promise<{ session: string; lastSeen: number }[]> {
+      const raw = await redis.hgetall(REGISTRY_KEY);
+      const out: { session: string; lastSeen: number }[] = [];
+      for (const [k, v] of Object.entries(raw ?? {})) {
+        const t = typeof v === "string" ? Number(v) : NaN;
+        if (Number.isFinite(t)) out.push({ session: k, lastSeen: t });
+      }
+      return out.sort((a, b) => b.lastSeen - a.lastSeen);
     }
 
     async getRepliesSince(session: string, since: number): Promise<NurseReply[]> {

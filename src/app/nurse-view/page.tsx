@@ -22,6 +22,16 @@ import { GestureLogEntry, NurseReply, ESCALATION_RULES } from "@/types";
 import { getSession, setSessionId, clearSession } from "@/lib/session";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { evaluateEscalations } from "@/lib/escalation";
+import { isAlarmMuted, setAlarmMuted, startAlarm, stopAlarm } from "@/lib/nurseAlarm";
+import { addGestureLog } from "@/lib/gestureLog";
+import { voiceAlert } from "@/lib/tts";
+import {
+  forecastDeterioration,
+  bandRank,
+  trajectoryAlertText,
+  type ForecastResult,
+  type VitalSample,
+} from "@/lib/forecast";
 import {
   computeStats,
   hourlyDistribution,
@@ -63,6 +73,15 @@ export default function NurseViewPage() {
   const logRef = useRef<GestureLogEntry[]>([]);
   const handleAlert = useCallback((entry: GestureLogEntry) => {
     setLog((prev) => (prev.some((e) => e.id === entry.id) ? prev : [entry, ...prev]));
+    // system notification when the tab isn't in focus (phone in pocket use-case)
+    try {
+      if (typeof document !== "undefined" && document.hidden && "Notification" in window && Notification.permission === "granted") {
+        new Notification(`${entry.gesture} — CareSpeak`, {
+          body: stripGesturePrefix(entry.description).slice(0, 110),
+          tag: entry.id,
+        });
+      }
+    } catch {}
   }, []);
 
   /* messages typed by someone sitting with the patient */
@@ -74,7 +93,7 @@ export default function NurseViewPage() {
     setUnseenMsgs((n) => n + 1);
   }, []);
 
-  const { status, transport, driver, remoteMetrics, vitals, sendAction, sendReply } = useLiveSync({
+  const { status, transport, driver, remoteMetrics, vitals, sendAction, sendReply, syncRef } = useLiveSync({
     sessionId: sessionInput,
     enabled: paired,
     onAlert: handleAlert,
@@ -173,6 +192,100 @@ export default function NurseViewPage() {
     return () => clearInterval(t);
   }, [primaryMetrics, sendAction]);
 
+  /* ── audible siren while any EMERGENCY is unacknowledged ── */
+  const [alarmMutedState, setAlarmMutedState] = useState(isAlarmMuted());
+  const unresolvedEmergencies = useMemo(
+    () => log.filter((e) => e.gesture === "EMERGENCY" && !e.resolved),
+    [log]
+  );
+  useEffect(() => {
+    if (!paired) {
+      stopAlarm();
+      return;
+    }
+    if (unresolvedEmergencies.length > 0) startAlarm();
+    else stopAlarm();
+    return () => stopAlarm();
+  }, [paired, unresolvedEmergencies.length]);
+
+  /* ── flashing tab title when criticals are pending ── */
+  const originalTitle = useRef(typeof document !== "undefined" ? document.title : "CareSpeak");
+  useEffect(() => {
+    const critical = unresolvedEmergencies.length > 0;
+    if (!critical) {
+      document.title = originalTitle.current;
+      return;
+    }
+    let on = false;
+    const t = setInterval(() => {
+      on = !on;
+      document.title = on ? `🚨 (${unresolvedEmergencies.length}) EMERGENCY` : originalTitle.current;
+    }, 1100);
+    return () => {
+      clearInterval(t);
+      document.title = originalTitle.current;
+    };
+  }, [unresolvedEmergencies.length]);
+
+  /* ── notification permission on first user interaction after pairing ── */
+  useEffect(() => {
+    if (!paired || !("Notification" in window) || Notification.permission !== "default") return;
+    const ask = () => {
+      void Notification.requestPermission();
+      window.removeEventListener("pointerdown", ask);
+    };
+    window.addEventListener("pointerdown", ask, { once: true });
+    return () => window.removeEventListener("pointerdown", ask);
+  }, [paired]);
+
+  /* ── closed-loop escalation chain: EMERGENCY unacknowledged for 60s ── */
+  const chainNotifiedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const scan = () => {
+      const now = Date.now();
+      for (const e of logRef.current) {
+        if (e.gesture !== "EMERGENCY" || e.resolved || e.acknowledged) continue;
+        if (now - e.timestamp < 60_000) continue;
+        if (chainNotifiedRef.current.has(e.id)) continue;
+        chainNotifiedRef.current.add(e.id);
+        if (chainNotifiedRef.current.size > 200) chainNotifiedRef.current.clear();
+
+        sendAction({
+          type: "escalate",
+          entryId: e.id,
+          timestamp: Date.now(),
+          actor: "Escalation Chain",
+          bySystem: true,
+        });
+        setAutoNotes((notes) =>
+          [
+            `${new Date().toLocaleTimeString()} · ⛓ No ack in 60s — escalation chain fired (WhatsApp/SMS dispatch attempted)`,
+            ...notes,
+          ].slice(0, 6)
+        );
+        // Fire-and-forget dispatch; logs to server console when no provider keys are set.
+        void fetch("/api/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session: sessionInput,
+            patient: sessionInput,
+            gesture: e.gesture,
+            contacts: (() => {
+              try {
+                return JSON.parse(localStorage.getItem("carespeak_contacts") ?? "[]") as string[];
+              } catch {
+                return [] as string[];
+              }
+            })(),
+          }),
+        }).catch(() => {});
+      }
+    };
+    const t = setInterval(scan, 15000);
+    return () => clearInterval(t);
+  }, [sessionInput, sendAction]);
+
   /* ── actions ── */
   const handleAcknowledge = useCallback(
     (id: string) => {
@@ -262,6 +375,55 @@ export default function NurseViewPage() {
   }, [log, filter]);
 
   const primaryVitals = useMemo(() => Object.values(vitals)[0] ?? null, [vitals]);
+
+  /* ── predictive deterioration trajectory (Holt projection) ── */
+  const vitalSamplesRef = useRef<VitalSample[]>([]);
+  const [trajectory, setTrajectory] = useState<ForecastResult | null>(null);
+  const lastWarnBandRef = useRef(0);
+
+  useEffect(() => {
+    if (!paired) return;
+    const push = () => {
+      const v = primaryVitals;
+      const m = primaryMetrics;
+      if (!v && !m) return;
+      const arr = vitalSamplesRef.current;
+      if ((v?.heartRate != null || v?.spo2 != null || m?.alertnessScore != null)) {
+        arr.push({
+          t: Date.now(),
+          hr: v?.heartRate ?? undefined,
+          spo2: v?.spo2 ?? undefined,
+          alertness: m?.alertnessScore ?? undefined,
+          movement: m?.movementActivity ?? undefined,
+        });
+        if (arr.length > 120) arr.splice(0, arr.length - 120);
+      }
+    };
+    push();
+    const compute = setInterval(() => {
+      if (vitalSamplesRef.current.length < 6) return;
+      const f = forecastDeterioration(vitalSamplesRef.current);
+      setTrajectory(f);
+      // auto-raise a SYSTEM alert only when severity increases
+      const rank = bandRank(f.band);
+      if (rank >= 2 && rank > lastWarnBandRef.current) {
+        lastWarnBandRef.current = rank;
+        const entry = addGestureLog(
+          "SYSTEM",
+          trajectoryAlertText(f),
+          0.9,
+          "system",
+          voiceAlert.getLanguage(),
+          { sessionId: sessionInput, source: "demo" as const }
+        );
+        syncRef.current?.sendAlert(entry);
+      } else if (rank === 0) {
+        lastWarnBandRef.current = 0;
+      }
+    }, 5000);
+    return () => clearInterval(compute);
+  }, [paired, primaryVitals, primaryMetrics, sessionInput]);
+
   const statusColor =
     status === "connected" ? "bg-[#22a67e]" : status === "reconnecting" ? "bg-[#e8993e]" : "bg-[#d94a4a]";
   const statusText =
@@ -285,10 +447,29 @@ export default function NurseViewPage() {
               <h1 className="text-3xl sm:text-4xl font-bold text-[#1f1f1f] tracking-tight">Patient Communication Monitor</h1>
               <p className="mt-2 text-[#6e6e6e]">Real-time gesture alerts, wellness analytics and two-way messaging.</p>
             </div>
-            <a href="/report" target="_blank" rel="noreferrer" className="btn-secondary flex items-center gap-2 px-4 py-2.5 text-sm">
-              <FileText className="w-4 h-4" />
-              Shift Report
-            </a>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  const next = !alarmMutedState;
+                  setAlarmMuted(next);
+                  setAlarmMutedState(next);
+                  if (!next && unresolvedEmergencies.length > 0) startAlarm();
+                }}
+                aria-label={alarmMutedState ? "Enable alarm sound" : "Mute alarm sound"}
+                title={alarmMutedState ? "Alarm muted — click to enable" : "Alarm armed — click to mute"}
+                className={`p-2.5 rounded-xl border transition-all ${
+                  alarmMutedState
+                    ? "bg-white border-[#ececec] text-[#9ca3af]"
+                    : "bg-[#ecfdf5] border-[#a7f3d0] text-[#22a67e]"
+                }`}
+              >
+                {alarmMutedState ? "🔇" : "🔔"}
+              </button>
+              <a href="/report" target="_blank" rel="noreferrer" className="btn-secondary flex items-center gap-2 px-4 py-2.5 text-sm">
+                <FileText className="w-4 h-4" />
+                Shift Report
+              </a>
+            </div>
           </div>
         </motion.div>
 
@@ -480,6 +661,52 @@ export default function NurseViewPage() {
           <div className="space-y-6">
             <PatientMetricsCard metrics={primaryMetrics} log={log} vitals={primaryVitals} deviceName="Paired Device" />
 
+            {/* predictive deterioration trajectory */}
+            <div className="card p-5">
+              <h3 className="text-sm font-semibold text-[#1f1f1f] mb-3 flex items-center gap-2">
+                <Activity className="w-4 h-4 text-[#c63a22]" />
+                Deterioration Trajectory
+                {trajectory && (
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      trajectory.band === "imminent"
+                        ? "bg-[#d94a4a] text-white"
+                        : trajectory.band === "warning"
+                        ? "bg-[#e8993e] text-white"
+                        : trajectory.band === "watch"
+                        ? "bg-[#fffbeb] text-[#e8993e] border border-[#fde68a]"
+                        : "bg-[#ecfdf5] text-[#22a67e]"
+                    }`}
+                  >
+                    {trajectory.band.toUpperCase()}
+                  </span>
+                )}
+              </h3>
+              {!trajectory || !trajectory.reasons.length ? (
+                <p className="text-xs text-[#9ca3af]">
+                  {trajectory
+                    ? "All trends within safe range. Holt projection updated every 5s over the last ~30 min."
+                    : "Collecting trend samples from camera metrics and wearable vitals…"}
+                </p>
+              ) : (
+                <>
+                  <div className="flex items-baseline gap-3 mb-2">
+                    <span className={`text-3xl font-extrabold ${bandRank(trajectory.band) >= 2 ? "text-[#d94a4a]" : "text-[#e8993e]"}`}>
+                      {trajectory.score}
+                    </span>
+                    <span className="text-xs text-[#6e6e6e]">/ 100 · projected next 15 min</span>
+                  </div>
+                  <ul className="space-y-1">
+                    {trajectory.reasons.map((r, i) => (
+                      <li key={i} className="text-xs text-[#6e6e6e] flex gap-1.5">
+                        <span className="text-[#c63a22]">▸</span> {r}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+
             {/* two-way messaging */}
             <div className="card p-5">
               <h3 className="text-sm font-semibold text-[#1f1f1f] mb-3 flex items-center gap-2">
@@ -493,6 +720,11 @@ export default function NurseViewPage() {
                     {q}
                   </button>
                 ))}
+                <button onClick={() => handleSendReply("[PAIN] Requesting pain level")}
+                  title="Opens a 0–10 pain scale on the patient screen; the patient selects with gaze"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#fef2f2] text-[#d94a4a] hover:bg-[#fee2e2] transition-all border border-[#fecaca]">
+                  🩺 Request pain level
+                </button>
               </div>
               <div className="flex gap-2">
                 <input

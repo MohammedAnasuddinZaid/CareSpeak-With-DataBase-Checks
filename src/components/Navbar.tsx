@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, Menu, X, Hand, Eye, Activity, FileText, Info, AlertTriangle, Camera, ClipboardList } from "lucide-react";
+import { ChevronDown, Menu, X, Hand, Eye, Activity, FileText, Info, AlertTriangle, Camera, ClipboardList, BedDouble } from "lucide-react";
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from "@/types";
 import { voiceAlert } from "@/lib/tts";
 
@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { href: "/eye-mode", label: "Eye Mode", icon: Eye },
   { href: "/cctv", label: "CCTV", icon: Camera },
   { href: "/nurse-view", label: "Nurse", icon: Activity },
+  { href: "/ward", label: "Ward", icon: BedDouble },
   { href: "/logs", label: "Logs", icon: FileText },
   { href: "/report", label: "Report", icon: ClipboardList },
   { href: "/about", label: "About", icon: Info },
