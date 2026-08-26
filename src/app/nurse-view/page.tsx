@@ -24,6 +24,7 @@ import { useLiveSync } from "@/hooks/useLiveSync";
 import { evaluateEscalations } from "@/lib/escalation";
 import { isAlarmMuted, setAlarmMuted, startAlarm, stopAlarm } from "@/lib/nurseAlarm";
 import { addGestureLog } from "@/lib/gestureLog";
+import { recordAudit } from "@/lib/auditTrail";
 import { voiceAlert } from "@/lib/tts";
 import {
   forecastDeterioration,
@@ -375,6 +376,7 @@ export default function NurseViewPage() {
             actor: "CareSpeak Engine",
             bySystem: true,
           });
+          recordAudit("auto_escalate", `Auto-escalated ${e.gesture} — ${d.reason}`, { sessionId: session });
           setAutoNotes((notes) =>
             [`${new Date().toLocaleTimeString()} · Auto-escalated ${e.gesture} — ${d.reason}`, ...notes].slice(0, 6)
           );
@@ -401,6 +403,11 @@ export default function NurseViewPage() {
             actor: "Escalation Chain",
             bySystem: true,
           });
+          recordAudit(
+            "escalation_chain",
+            "EMERGENCY unacknowledged 60s — escalation chain fired (WhatsApp/SMS dispatch attempted)",
+            { sessionId: session, citation: { docId: "NICE-CG50", section: "monitoring" } }
+          );
           setAutoNotes((notes) =>
             [
               `${new Date().toLocaleTimeString()} · ⛓ No ack in 60s — escalation chain fired (WhatsApp/SMS dispatch attempted)`,
@@ -452,9 +459,14 @@ export default function NurseViewPage() {
         const rank = bandRank(f.band);
         if (rank >= 2 && rank > lastWarnBandRef.current) {
           lastWarnBandRef.current = rank;
+          const text = trajectoryAlertText(f);
+          recordAudit("trajectory_alert", text, {
+            sessionId: session,
+            citation: { docId: "RCP-NEWS2", section: "response" },
+          });
           const entry = addGestureLog(
             "SYSTEM",
-            trajectoryAlertText(f),
+            text,
             0.9,
             "system",
             voiceAlert.getLanguage(),

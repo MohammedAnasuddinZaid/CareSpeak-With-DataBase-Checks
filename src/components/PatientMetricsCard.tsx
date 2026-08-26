@@ -6,6 +6,7 @@ import { Eye, Activity, BarChart3, Clock, AlertTriangle, HeartPulse } from "luci
 import { DeviceVitals, PatientMetrics } from "@/types";
 import { computeRisk } from "@/lib/risk";
 import { GestureLogEntry } from "@/types";
+import RiskAttribution from "@/components/RiskAttribution";
 
 interface PatientMetricsCardProps {
   metrics: PatientMetrics | null;
@@ -24,7 +25,18 @@ const RISK_COLORS: Record<string, string> = {
 };
 
 export default function PatientMetricsCard({ metrics, deviceName = "Patient Device", log = [], vitals }: PatientMetricsCardProps) {
-  const risk = useMemo(() => computeRisk(metrics, log), [metrics, log]);
+  // Risk includes NEWS2-style vital parameters whenever the wearable streams;
+  // camera-only deployments fall back to eye-derived wellness factors.
+  const risk = useMemo(
+    () =>
+      computeRisk(
+        metrics,
+        log,
+        Date.now(),
+        vitals ? { heartRate: vitals.heartRate, spo2: vitals.spo2 } : null
+      ),
+    [metrics, log, vitals?.heartRate, vitals?.spo2]
+  );
   const riskColor = RISK_COLORS[risk.band];
   const staleVitals = vitals ? Date.now() - vitals.receivedAt > 30000 : false;
 
@@ -95,6 +107,9 @@ export default function PatientMetricsCard({ metrics, deviceName = "Patient Devi
           )}
         </div>
       </div>
+
+      {/* ── exact factor attribution (why this score?) ── */}
+      <RiskAttribution risk={risk} />
 
       {/* ── IoT wearable vitals ── */}
       {vitals && (

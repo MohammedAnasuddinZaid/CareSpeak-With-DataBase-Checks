@@ -20,6 +20,8 @@ syncing for low-connectivity wards, and a ₹1,100 IoT wearable for vitals & SOS
 | Escalation | Manual only | **Rule engine auto-escalates** (HELP frequency / low alertness / inactivity) with audit log |
 | Communication | One-way alerts | **Two-way**: nurse types or *speaks* a reply; patient sees full-screen banner + hears it |
 | Languages | English only | **10 Indian languages** incl. Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati, Kannada, Malayalam, Punjabi |
+| Explainability | "AI says so" | **Exact Shapley attribution** — the triage score is additive, so every point is attributed to a named factor (φᵢ = componentᵢ − componentᵢbaseline, zero approximation) and rendered as a signed contribution chart |
+| Clinical grounding | None | Every risk factor & escalation cites a **curated clinical reference corpus** (NEWS 2, NICE CG50) as `DOCID §section`, printed in the shift report |
 | Hardware | None | **ESP32 wearable**: HR/SpO₂ vitals + physical SOS button wired into the same console |
 | Clinical output | Nothing | **Auto-generated printable shift report** (`/report`) + CSV/JSON export |
 | Ward scale | Single patient | **Ward view** (`/ward`), siren + system notifications, 60s no-ack escalation chain, gaze-driven pain scale, and a damped-Holt **deterioration trajectory** forecast |
@@ -88,6 +90,7 @@ npm run build      # production build
 
 See `docs/HARDWARE.md` for the cyber-physical diagram, ESP32 wiring table,
 BOM, LoRa/GSM rural variants and the 90-second judge demo script.
+See `docs/REFERENCES.md` for the complete bibliography of clinical guidelines (NEWS2, NICE CG50), computer vision papers (MediaPipe, EAR), Shapley attribution math, and forecasting literature.
 
 ```
 Patient browser ──gesture events──▶ /api/sync ◀──ESP32 wearable── vitals/SOS
@@ -103,7 +106,9 @@ Web Speech TTS                    /api/stream (SSE push)
 ## Engineering quality
 
 - **TypeScript strict** across the codebase; validated API payloads (server-side sanitizers, clinical-range clamps, NaN rejection).
-- **Unit tests** for the hand classifier, eye smoother, escalation rules, risk engine, store concurrency guarantees and forecast maths (`npm test`).
+- **Unit tests** for the hand classifier, eye smoother, escalation rules, risk engine + Shapley invariant, store concurrency guarantees and forecast maths (`npm test`).
+- **Explainable triage**: additive risk model ⇒ exact closed-form Shapley values (test-asserted `Σφᵢ === score`); "Why this score?" diverging-bar chart with per-factor clinical citations.
+- **Clinical audit trail**: every automated decision (auto-escalation, escalation chain, trajectory alerts) persisted, replayed in the printable shift report and exportable to formula-safe CSV.
 - **Exactly-once delivery**: SSE `Last-Event-ID` resume + per-connection dedupe, monotonic server-time cursors (same-ms bursts can't be skipped), lifecycle-preserving idempotent writes — a duplicate POST can never erase a nurse's acknowledgement.
 - **Security**: CSP + hardened headers, session-scoped data isolation, crypto-random session IDs and per-bed pairing tokens, scan-log access requires the QR's token, optional shared-token device auth, formula-injection-safe CSV export.
 - **Accessibility**: aria-live gesture announcements, labeled controls, keyboard-friendly nav.

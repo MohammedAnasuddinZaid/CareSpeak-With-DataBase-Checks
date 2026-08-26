@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Printer, ArrowLeft, FileText, CloudDownload } from "lucide-react";
 import { loadGestureLog } from "@/lib/gestureLog";
 import { computeStats, hourlyDistribution, toCsv } from "@/lib/analytics";
+import { loadAuditLog, auditToCsv, type AuditEvent } from "@/lib/auditTrail";
+import { citationPassage } from "@/lib/clinicalBasis";
 import { GestureLogEntry } from "@/types";
 import { getSession } from "@/lib/session";
 
@@ -24,6 +26,7 @@ export default function ReportPage() {
   const [log, setLog] = useState<GestureLogEntry[]>([]);
   const [patientName, setPatientName] = useState("");
   const [ward, setWard] = useState("");
+  const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [syncedCount, setSyncedCount] = useState<number | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
 
@@ -31,6 +34,7 @@ export default function ReportPage() {
     // Local history first (instant paint), then merge authoritative server
     // history so a nurse printing from ANY paired device gets the full shift.
     setLog(loadGestureLog());
+    setAudit(loadAuditLog());
     try {
       const saved = localStorage.getItem("carespeak_report_meta");
       if (saved) {
@@ -191,6 +195,44 @@ export default function ReportPage() {
             </table>
           </section>
 
+          {/* ── automation audit trail: replayable record of every engine decision ── */}
+          <section className="mt-8">
+            <h2 className="text-sm font-bold uppercase tracking-widest text-[#6e6e6e] mb-3">
+              Automation Audit Trail ({audit.length} engine decisions)
+            </h2>
+            {audit.length === 0 ? (
+              <p className="text-xs text-[#9ca3af]">No automated decisions recorded in this shift.</p>
+            ) : (
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="border-b-2 border-[#ececec] text-left text-[#6e6e6e] uppercase tracking-wider text-[10px]">
+                    <th className="py-2 pr-2">Time</th><th className="pr-2">Decision</th><th>Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {audit.slice(0, 40).map((e) => (
+                    <tr key={e.id} className="border-b border-[#f0f0f0] align-top">
+                      <td className="py-1.5 pr-2 whitespace-nowrap">{new Date(e.at).toLocaleTimeString()}</td>
+                      <td className="pr-2 font-semibold whitespace-nowrap">{kindLabel(e.kind)}</td>
+                      <td>
+                        {e.detail}
+                        {e.citation && (
+                          <span className="block text-[10px] text-[#6e6e6e] mt-0.5">
+                            Basis — {citationPassage(e.citation)}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <p className="text-[10px] text-[#9ca3af] mt-2">
+              Clinical basis citations reference curated summaries of published guidance (NEWS 2, NICE CG50);
+              verify against source guidance before clinical use.
+            </p>
+          </section>
+
           <footer className="mt-8 pt-4 border-t border-[#ececec] text-[10px] text-[#9ca3af] flex items-center justify-between">
             <span>CareSpeak — on-device assistive communication. All processing local; only gesture metadata is shared.</span>
             <span>Page 1 of 1</span>
@@ -203,6 +245,14 @@ export default function ReportPage() {
         >
           Download raw data (CSV)
         </button>
+        {audit.length > 0 && (
+          <button
+            onClick={downloadAuditCsv}
+            className="no-print mt-2 btn-secondary w-full py-3 text-sm flex items-center justify-center gap-2"
+          >
+            Download automation audit trail (CSV)
+          </button>
+        )}
       </div>
 
       <style jsx global>{`
@@ -216,6 +266,26 @@ export default function ReportPage() {
       `}</style>
     </div>
   );
+}
+
+function kindLabel(kind: AuditEvent["kind"]): string {
+  return {
+    auto_escalate: "Auto-escalation",
+    escalation_chain: "Escalation chain",
+    trajectory_alert: "Trajectory alert",
+    alarm_state: "Alarm state",
+    pairing_scan: "QR pairing",
+  }[kind];
+}
+
+function downloadAuditCsv() {
+  const blob = new Blob([auditToCsv(loadAuditLog())], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `carespeak-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function downloadCsv(log: GestureLogEntry[]) {

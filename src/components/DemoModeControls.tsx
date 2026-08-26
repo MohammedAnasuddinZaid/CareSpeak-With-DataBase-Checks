@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Beaker, Eye, Hand, ThumbsUp, ThumbsDown, HelpCircle, Droplets } from "lucide-react";
+import { Beaker, Eye, Hand, ThumbsUp, ThumbsDown, HelpCircle, Droplets, Play, Square } from "lucide-react";
 
 interface DemoModeControlsProps {
   onSimulateGesture: (gesture: string) => void;
@@ -16,8 +16,58 @@ const GESTURE_BUTTONS = [
   { gesture: "WATER", icon: Droplets, label: "Water", color: "text-[#3b82f6] bg-[#eff6ff] hover:bg-[#dbeafe]" },
 ];
 
+/** Scripted closed-loop scenario for judges — exercises the FULL pipeline:
+ *  gestures → TTS → sync → server → nurse console → auto-escalation rules.
+ *  Timeline (ms) is deliberately paced so each stage is visible on the nurse
+ *  screen while it happens. */
+const SCENARIO: { at: number; gesture: string; caption: string }[] = [
+  { at: 0, gesture: "WATER", caption: "Patient asks for water — spoken aloud + streamed to the nurse" },
+  { at: 2500, gesture: "YES", caption: "Patient answers YES to a question" },
+  { at: 5000, gesture: "HELP", caption: "HELP call #1 — watch it appear on the nurse console" },
+  { at: 7000, gesture: "HELP", caption: "HELP call #2" },
+  { at: 9000, gesture: "HELP", caption: "HELP call #3 — triggers the help-frequency AUTO-ESCALATION rule!" },
+  { at: 13000, gesture: "EMERGENCY", caption: "EMERGENCY — siren arms, tab flashes, escalation chain armed" },
+];
+const SCENARIO_END_MS = 15500;
+
 export default function DemoModeControls({ onSimulateGesture, gestureType }: DemoModeControlsProps) {
   const [active, setActive] = useState(false);
+  const [scenarioStep, setScenarioStep] = useState<number | null>(null);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearTimers = () => {
+    for (const t of timersRef.current) clearTimeout(t);
+    timersRef.current = [];
+  };
+
+  useEffect(() => () => clearTimers(), []);
+
+  const runScenario = () => {
+    clearTimers();
+    setScenarioStep(0);
+    for (const step of SCENARIO) {
+      timersRef.current.push(
+        setTimeout(() => {
+          onSimulateGesture(step.gesture);
+          setScenarioStep(SCENARIO.indexOf(step) + 1);
+        }, step.at)
+      );
+    }
+    timersRef.current.push(setTimeout(() => setScenarioStep(null), SCENARIO_END_MS));
+  };
+
+  const stopScenario = () => {
+    clearTimers();
+    setScenarioStep(null);
+  };
+
+  const running = scenarioStep !== null;
+  const currentCaption =
+    running && scenarioStep > 0
+      ? SCENARIO[Math.min(scenarioStep - 1, SCENARIO.length - 1)].caption
+      : running
+      ? "Starting scripted scenario…"
+      : "";
 
   return (
     <div>
@@ -51,6 +101,32 @@ export default function DemoModeControls({ onSimulateGesture, gestureType }: Dem
                   Simulate {gestureType === "hand" ? "hand" : "eye"} gestures
                 </span>
               </div>
+
+              {/* ── one-click judge scenario ── */}
+              <button
+                onClick={running ? stopScenario : runScenario}
+                className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all mb-3 ${
+                  running
+                    ? "bg-[#fef2f2] text-[#d94a4a] border border-[#fecaca]"
+                    : "bg-[#c63a22] text-white hover:bg-[#a83220]"
+                }`}
+              >
+                {running ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                {running ? "Stop scenario" : "▶ Run closed-loop scenario (15s)"}
+              </button>
+              {running && currentCaption && (
+                <motion.p
+                  key={scenarioStep}
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="text-xs text-[#c63a22] font-medium mb-3 text-center"
+                  role="status"
+                  aria-live="polite"
+                >
+                  {currentCaption}
+                </motion.p>
+              )}
+
               <div className="grid grid-cols-2 gap-2">
                 {GESTURE_BUTTONS.map((btn) => {
                   const Icon = btn.icon;
@@ -58,7 +134,8 @@ export default function DemoModeControls({ onSimulateGesture, gestureType }: Dem
                     <button
                       key={btn.gesture}
                       onClick={() => onSimulateGesture(btn.gesture)}
-                      className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${btn.color}`}
+                      disabled={running}
+                      className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium transition-all disabled:opacity-40 ${btn.color}`}
                     >
                       <Icon className="w-4 h-4" />
                       {btn.label}
