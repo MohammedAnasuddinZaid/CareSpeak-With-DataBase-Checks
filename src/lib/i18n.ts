@@ -6,6 +6,7 @@ export type UIKey =
   | "eyeMode"
   | "cctv"
   | "nurse"
+  | "ward"
   | "logs"
   | "report"
   | "about"
@@ -53,6 +54,7 @@ const en: Dict = {
   eyeMode: "Eye Mode",
   cctv: "CCTV",
   nurse: "Nurse",
+  ward: "Ward",
   logs: "Logs",
   report: "Report",
   about: "About",
@@ -99,6 +101,7 @@ const hi: Dict = {
   eyeMode: "आँख मोड",
   cctv: "सीसीटीवी",
   nurse: "नर्स",
+  ward: "वार्ड",
   logs: "लॉग्स",
   report: "रिपोर्ट",
   about: "हमारे बारे में",
@@ -145,6 +148,7 @@ const bn: Dict = {
   eyeMode: "চোখের মোড",
   cctv: "সিসিটিভি",
   nurse: "নার্স",
+  ward: "ওয়ার্ড",
   logs: "লগ",
   report: "রিপোর্ট",
   about: "আমাদের সম্পর্কে",
@@ -191,6 +195,7 @@ const ta: Dict = {
   eyeMode: "கண் பயன்முறை",
   cctv: "கேமரா",
   nurse: "நர்ஸ்",
+  ward: "வார்டு",
   logs: "பதிவுகள்",
   report: "அறிக்கை",
   about: "எங்களைப் பற்றி",
@@ -237,6 +242,7 @@ const te: Dict = {
   eyeMode: "కంటి మోడ్",
   cctv: "సీసీటీవి",
   nurse: "నర్స్",
+  ward: "వార్డు",
   logs: "లాగ్‌లు",
   report: "నివేదిక",
   about: "మా గురించి",
@@ -283,6 +289,7 @@ const mr: Dict = {
   eyeMode: "डोळा मोड",
   cctv: "सीसीटीव्ही",
   nurse: "नर्स",
+  ward: "वॉर्ड",
   logs: "लॉग",
   report: "अहवाल",
   about: "आमच्याविषयी",
@@ -329,6 +336,7 @@ const gu: Dict = {
   eyeMode: "આંખ મોડ",
   cctv: "સીસીટીવી",
   nurse: "નર્સ",
+  ward: "વોર્ડ",
   logs: "લોગ્સ",
   report: "અહેવાલ",
   about: "અમારા વિશે",
@@ -375,6 +383,7 @@ const kn: Dict = {
   eyeMode: "ಕಣ್ಣಿನ ಮೋಡ್",
   cctv: "ಸಿಸಿಟಿವಿ",
   nurse: "ನರ್ಸ್",
+  ward: "ವಾರ್ಡ್",
   logs: "ಲಾಗ್‌ಗಳು",
   report: "ವರದಿ",
   about: "ನಮ್ಮ ಬಗ್ಗೆ",
@@ -421,6 +430,7 @@ const ml: Dict = {
   eyeMode: "കണ്ണ് മോഡ്",
   cctv: "സിസിടിവി",
   nurse: "നഴ്സ്",
+  ward: "വാർഡ്",
   logs: "ലോഗുകൾ",
   report: "റിപ്പോർട്ട്",
   about: "ഞങ്ങളെക്കുറിച്ച്",
@@ -467,6 +477,7 @@ const pa: Dict = {
   eyeMode: "ਅੱਖ ਮੋਡ",
   cctv: "ਸੀਸੀਟੀਵੀ",
   nurse: "ਨਰਸ",
+  ward: "ਵਾਰਡ",
   logs: "ਲੌਗ",
   report: "ਰਿਪੋਰਟ",
   about: "ਸਾਡੇ ਬਾਰੇ",
@@ -524,4 +535,29 @@ export const I18N_LANGUAGES = Object.keys(DICTS) as SupportedLanguage[];
 export function t(lang: SupportedLanguage | string, key: UIKey): string {
   const dict = DICTS[(lang as SupportedLanguage)] ?? en;
   return dict[key] ?? en[key];
+}
+
+/* ── reactive language store ─────────────────────────────────────
+ * Lets React components re-render the moment the language changes
+ * (tts.setLanguage notifies). Snapshot = persisted language code. */
+const langListeners = new Set<() => void>();
+
+export function subscribeUiLanguage(cb: () => void): () => void {
+  langListeners.add(cb);
+  return () => {
+    langListeners.delete(cb);
+  };
+}
+
+export function getUiLanguageSnapshot(): string {
+  if (typeof window === "undefined") return "en-US";
+  try {
+    return localStorage.getItem("carespeak_language") ?? "en-US";
+  } catch {
+    return "en-US";
+  }
+}
+
+export function notifyUiLanguageChanged(): void {
+  for (const cb of langListeners) cb();
 }

@@ -206,6 +206,10 @@ export class NetworkSync {
         this.cfg.onStatusUpdate?.(e.id, e.status as NonNullable<StoredEntry["status"]>);
       }
       this.knownStatus.set(e.id, e.status ?? "none");
+      if (this.knownStatus.size > 3000) {
+        // bound memory alongside seenIds on long-running dashboards
+        for (const id of Array.from(this.knownStatus.keys()).slice(0, 1000)) this.knownStatus.delete(id);
+      }
       if (!this.seenIds.has(e.id)) {
         this.seenIds.add(e.id);
         if (this.seenIds.size > 3000) {
@@ -333,7 +337,12 @@ export class NetworkSync {
         clearInterval(this.pollTimer);
         this.pollTimer = null;
       }
-      this.setStatus(this.failures > 1 ? "reconnecting" : "connected", this.failures > 3 ? "offline" : "poll");
+      // First failure already means reconciliation is broken — never claim
+      // "connected" while requests are failing.
+      this.setStatus(
+        "reconnecting",
+        this.es ? "sse" : this.failures > 3 ? "offline" : "poll"
+      );
       this.schedulePoll();
     }
   }

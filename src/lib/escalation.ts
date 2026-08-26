@@ -46,10 +46,12 @@ export function evaluateEscalations(
     const fresh = metrics.lastSeen ? now - new Date(metrics.lastSeen).getTime() < lowAlert.windowMs : false;
     const low = metrics.alertnessScore < lowAlert.threshold;
     if (fresh && low) {
-      const candidate = [...log]
-        .sort((a, b) => b.timestamp - a.timestamp)
-        .find((e) => isActionable(e) || (e.escalated && !e.resolved));
-      if (candidate && isActionable(candidate)) {
+      // `.find(isActionable)` only: the old `|| (e.escalated && !e.resolved)`
+      // clause could select an already-escalated entry that the outer guard
+      // then rejected, silently aborting the rule even when older actionable
+      // entries existed.
+      const candidate = [...log].sort((a, b) => b.timestamp - a.timestamp).find(isActionable);
+      if (candidate) {
         decisions.push({
           rule: "low_alertness",
           entryId: candidate.id,
@@ -66,11 +68,17 @@ export function evaluateEscalations(
     const silentFor = now - Math.max(latestTs, isFinite(metricsAge) ? now - metricsAge : latestTs);
     const wasActiveRecently = now - latestTs < 30 * 60 * 1000;
     if (wasActiveRecently && silentFor >= inactivity.threshold && !log.some((e) => e.escalated && !e.resolved)) {
-      decisions.push({
-        rule: "prolonged_inactivity",
-        entryId: [...log].sort((a, b) => b.timestamp - a.timestamp)[0]?.id ?? "",
-        reason: `No patient activity for ${Math.round(silentFor / 1000)}s`,
-      });
+      // Attach to the newest entry that can still carry an escalation —
+      // previously it targeted log[0] even when resolved, so the decision
+      // no-op'd and the inactivity alert was lost entirely.
+      const target = [...log].sort((a, b) => b.timestamp - a.timestamp).find((e) => !e.resolved && !e.escalated);
+      if (target) {
+        decisions.push({
+          rule: "prolonged_inactivity",
+          entryId: target.id,
+          reason: `No patient activity for ${Math.round(silentFor / 1000)}s`,
+        });
+      }
     }
   }
 

@@ -6,17 +6,19 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Menu, X, Hand, Eye, Activity, FileText, Info, AlertTriangle, Camera, ClipboardList, BedDouble } from "lucide-react";
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from "@/types";
 import { voiceAlert } from "@/lib/tts";
+import { t, type UIKey } from "@/lib/i18n";
+import { useUiLanguage } from "@/hooks/useUiLanguage";
 
-const NAV_LINKS = [
-  { href: "/hand-mode", label: "Hand Mode", icon: Hand },
-  { href: "/eye-mode", label: "Eye Mode", icon: Eye },
-  { href: "/cctv", label: "CCTV", icon: Camera },
-  { href: "/nurse-view", label: "Nurse", icon: Activity },
-  { href: "/ward", label: "Ward", icon: BedDouble },
-  { href: "/logs", label: "Logs", icon: FileText },
-  { href: "/report", label: "Report", icon: ClipboardList },
-  { href: "/about", label: "About", icon: Info },
-  { href: "/emergency", label: "Emergency", icon: AlertTriangle, highlight: true },
+const NAV_LINKS: { href: string; label: string; i18nKey?: UIKey; icon: typeof Hand; highlight?: boolean }[] = [
+  { href: "/hand-mode", label: "Hand Mode", i18nKey: "handMode", icon: Hand },
+  { href: "/eye-mode", label: "Eye Mode", i18nKey: "eyeMode", icon: Eye },
+  { href: "/cctv", label: "CCTV", i18nKey: "cctv", icon: Camera },
+  { href: "/nurse-view", label: "Nurse", i18nKey: "nurse", icon: Activity },
+  { href: "/ward", label: "Ward", i18nKey: "ward", icon: BedDouble },
+  { href: "/logs", label: "Logs", i18nKey: "logs", icon: FileText },
+  { href: "/report", label: "Report", i18nKey: "report", icon: ClipboardList },
+  { href: "/about", label: "About", i18nKey: "about", icon: Info },
+  { href: "/emergency", label: "Emergency", i18nKey: "emergency", icon: AlertTriangle, highlight: true },
 ];
 
 export default function Navbar() {
@@ -24,9 +26,12 @@ export default function Navbar() {
   const [langOpen, setLangOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const pathname = usePathname();
-  const currentLang = voiceAlert.getLanguage();
+  // Reactive: switching language re-renders every nav label instantly.
+  const currentLang = useUiLanguage();
   const currentLangInfo = SUPPORTED_LANGUAGES[currentLang];
   const isLanding = pathname === "/";
+  const linkLabel = (link: (typeof NAV_LINKS)[number]): string =>
+    link.i18nKey ? t(currentLang, link.i18nKey) : link.label;
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 60);
@@ -81,7 +86,7 @@ export default function Navbar() {
                   }`}
                 >
                   <Icon className="w-4 h-4" />
-                  {link.label}
+                  {linkLabel(link)}
                 </a>
               );
             })}
@@ -154,7 +159,7 @@ export default function Navbar() {
                     }`}
                   >
                     <Icon className="w-4 h-4" />
-                    {link.label}
+                    {linkLabel(link)}
                   </a>
                 );
               })}

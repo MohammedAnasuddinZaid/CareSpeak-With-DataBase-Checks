@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionStore } from "@/lib/server/store";
+import { sanitizeVitals } from "@/lib/server/vitals";
 
 export const dynamic = "force-dynamic";
 
 /** device+session -> last SOS ms (per-instance; resets on cold start, which is fine) */
 const lastSosAt = new Map<string, number>();
+
+/** Evict the oldest throttled keys (insertion order). Bulk-clearing let an
+ *  attacker reset every device's dedup window by spraying junk sessions. */
+function evictOldestThrottles(): void {
+  while (lastSosAt.size > 500) {
+    const oldest = lastSosAt.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    lastSosAt.delete(oldest);
+  }
+}
 
 /**
  * IoT bridge for ESP32 / Raspberry Pi wearables.
@@ -42,14 +53,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     rssi?: number;
   } | null;
 
-  if (!body || typeof body.session !== "string" || !/^[A-Z0-9_-]{3,32}$/.test(body.session)) {
+  if (!body || typeof body.session !== "string" || !/^[A-Z0-9_-]{3,32}$/.test(body.session.toUpperCase())) {
     return NextResponse.json({ ok: false, error: "Invalid session" }, { status: 400 });
   }
   const deviceId = (body.deviceId ?? "esp32").slice(0, 64);
   const store = await getSessionStore();
-
-  const num = (v: unknown): number | undefined =>
-    typeof v === "number" && isFinite(v) ? v : undefined;
 
   // Per-device SOS throttle: one event per device+session per 5s (defends against
   // buggy firmware or a stuck button fanning out dozens of emergencies).
@@ -61,7 +69,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ ok: true, deduped: true, serverTime: now });
     }
     lastSosAt.set(key, now);
-    if (lastSosAt.size > 500) lastSosAt.clear();
+    evictOldestThrottles();
     await store.appendEntry(body.session.toUpperCase(), {
       id: `iot_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       gesture: "EMERGENCY",
@@ -80,12 +88,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (body.type === "vitals") {
     await store.setVitals(body.session.toUpperCase(), {
       deviceId,
-      heartRate: num(body.heartRate),
-      spo2: num(body.spo2),
-      temperature: num(body.temperature),
-      batteryPct: num(body.batteryPct),
-      rssi: num(body.rssi),
-      sosActive: !!body.sosActive,
+      ...sanitizeVitals(body),
       receivedAt: now,
     });
     return NextResponse.json({ ok: true, serverTime: now });

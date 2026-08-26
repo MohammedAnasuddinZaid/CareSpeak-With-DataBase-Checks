@@ -23,6 +23,10 @@ const PALM_HOLD_WATER_MS = 2000;
 const RESTING_WINDOW_MS = 10000;
 const RESTING_THRESHOLD = 5;
 const RESTING_COOLDOWN_MS = 20000;
+/** Cap MediaPipe inference at ~30 FPS: on 60-120 Hz displays every rAF tick
+ *  ran full WASM detection, doubling CPU/GPU/battery burn for zero accuracy
+ *  gain — the smoother needs temporal diversity, not duplicates. */
+const MIN_INFERENCE_INTERVAL_MS = 33;
 
 function dist(a: Point, b: Point): number {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
@@ -48,6 +52,13 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
   const waterHold = useRef({ start: 0, fired: false });
   const lastFpsTime = useRef(0);
   const frameCount = useRef(0);
+  const lastInferTs = useRef(0);
+  const startingRef = useRef(false);
+  // The render loop is created once; reading the callback through a ref keeps
+  // consumers free to pass inline arrows without freezing the first render's
+  // closure forever.
+  const onGestureRef = useRef(onGesture);
+  onGestureRef.current = onGesture;
   const liveRef = useRef({ confidence: 0, gesture: null as HandGesture });
   const metricsRef = useRef({
     prevLandmarks: null as Point[] | null,
@@ -111,6 +122,21 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
       animRef.current = requestAnimationFrame(processFrames);
       return;
     }
+
+    // Battery saver: skip inference while the tab is hidden; the loop keeps
+    // ticking cheaply and detection resumes the moment the tab is visible.
+    if (typeof document !== "undefined" && document.hidden) {
+      animRef.current = requestAnimationFrame(processFrames);
+      return;
+    }
+
+    // ~30 FPS inference cap — see MIN_INFERENCE_INTERVAL_MS.
+    const nowP = performance.now();
+    if (nowP - lastInferTs.current < MIN_INFERENCE_INTERVAL_MS) {
+      animRef.current = requestAnimationFrame(processFrames);
+      return;
+    }
+    lastInferTs.current = nowP;
 
     frameCount.current++;
     const nowTs = performance.now();
@@ -213,7 +239,7 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
         if (entry && smoothed.gesture !== lastLoggedGesture.current) {
           lastLoggedGesture.current = smoothed.gesture;
           voiceAlert.speak(smoothed.gesture, "hand");
-          if (onGesture) onGesture(smoothed.gesture, entry.description, smoothed.confidence);
+          if (onGestureRef.current) onGestureRef.current(smoothed.gesture, entry.description, smoothed.confidence);
           else addGestureLog(smoothed.gesture, entry.description, smoothed.confidence, "hand", voiceAlert.getLanguage());
         }
       }
@@ -235,7 +261,7 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
 
     drawOverlay(video, hands);
     animRef.current = requestAnimationFrame(processFrames);
-  }, [onGesture]);
+  }, []);
 
   function drawOverlay(video: HTMLVideoElement, hands: HandData[]) {
     const canvas = canvasRef.current;
@@ -293,38 +319,46 @@ export function useHandGesture({ onGesture }: UseHandGestureOptions = {}) {
 
   const startCamera = useCallback(async () => {
     setError(null);
-    const ok = await ensureLandmarker();
-    if (!ok) return;
-    const video = videoRef.current;
-    if (!video) {
-      setError("Camera panel is not ready — please refresh the page and try again.");
-      return;
-    }
+    if (startingRef.current || cameraOn) return; // double-click used to open TWO live streams and orphan the first
+    startingRef.current = true;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: "user" },
-      });
-      video.srcObject = stream;
-      streamRef.current = stream;
-      await video.play();
-      setCameraOn(true);
-      if (!runningRef.current) {
-        runningRef.current = true;
-        animRef.current = requestAnimationFrame(processFrames);
+      const ok = await ensureLandmarker();
+      if (!ok) return;
+      const video = videoRef.current;
+      if (!video) {
+        setError("Camera panel is not ready — please refresh the page and try again.");
+        return;
       }
-    } catch (e) {
-      const name = (e as DOMException)?.name ?? "";
-      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setError("Camera permission denied. Click the camera icon in the address bar, allow access, then press Start Camera again.");
-      } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-        setError("No camera found. Connect a webcam (or enable it in device settings) and try again.");
-      } else if (name === "NotReadableError" || name === "TrackStartError") {
-        setError("Camera is busy. Close other apps using it (Zoom / Meet / Teams / another tab), then try again.");
-      } else {
-        setError("Could not start the camera. Use Chrome or Edge over localhost/HTTPS, allow camera access, and retry.");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: "user" },
+        });
+        // If a previous stream exists (e.g. device switch), release it first.
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        video.srcObject = stream;
+        streamRef.current = stream;
+        await video.play();
+        setCameraOn(true);
+        if (!runningRef.current) {
+          runningRef.current = true;
+          animRef.current = requestAnimationFrame(processFrames);
+        }
+      } catch (e) {
+        const name = (e as DOMException)?.name ?? "";
+        if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+          setError("Camera permission denied. Click the camera icon in the address bar, allow access, then press Start Camera again.");
+        } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+          setError("No camera found. Connect a webcam (or enable it in device settings) and try again.");
+        } else if (name === "NotReadableError" || name === "TrackStartError") {
+          setError("Camera is busy. Close other apps using it (Zoom / Meet / Teams / another tab), then try again.");
+        } else {
+          setError("Could not start the camera. Use Chrome or Edge over localhost/HTTPS, allow camera access, and retry.");
+        }
       }
+    } finally {
+      startingRef.current = false;
     }
-  }, [ensureLandmarker, processFrames]);
+  }, [ensureLandmarker, processFrames, cameraOn]);
 
   const stopCamera = useCallback(() => {
     runningRef.current = false;

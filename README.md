@@ -22,7 +22,8 @@ syncing for low-connectivity wards, and a ₹1,100 IoT wearable for vitals & SOS
 | Languages | English only | **10 Indian languages** incl. Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati, Kannada, Malayalam, Punjabi |
 | Hardware | None | **ESP32 wearable**: HR/SpO₂ vitals + physical SOS button wired into the same console |
 | Clinical output | Nothing | **Auto-generated printable shift report** (`/report`) + CSV/JSON export |
-| Ward scale | Single patient | **Ward view** (`/ward`), siren + system notifications, 60s no-ack escalation chain, gaze-driven pain scale, and a Holt **deterioration trajectory** forecast |
+| Ward scale | Single patient | **Ward view** (`/ward`), siren + system notifications, 60s no-ack escalation chain, gaze-driven pain scale, and a damped-Holt **deterioration trajectory** forecast |
+| Pairing | Generic QR | **Unique per-bed QR**: every session bakes a cryptographic pairing token into its code, tracks each scanning device (IP + device + time) live on the patient screen and per-bed on the ward board, and can regenerate to invalidate old links |
 
 ## How the AI works (all client-side)
 
@@ -101,13 +102,13 @@ Web Speech TTS                    /api/stream (SSE push)
 
 ## Engineering quality
 
-- **TypeScript strict** across the codebase; validated API payloads (server-side sanitizers).
-- **Unit tests** for the hand classifier, eye smoother, escalation rules and risk engine (`npm test`).
-- **Security**: CSP + hardened headers, session-scoped data isolation, crypto-random
-  session IDs, optional shared-token device auth.
+- **TypeScript strict** across the codebase; validated API payloads (server-side sanitizers, clinical-range clamps, NaN rejection).
+- **Unit tests** for the hand classifier, eye smoother, escalation rules, risk engine, store concurrency guarantees and forecast maths (`npm test`).
+- **Exactly-once delivery**: SSE `Last-Event-ID` resume + per-connection dedupe, monotonic server-time cursors (same-ms bursts can't be skipped), lifecycle-preserving idempotent writes — a duplicate POST can never erase a nurse's acknowledgement.
+- **Security**: CSP + hardened headers, session-scoped data isolation, crypto-random session IDs and per-bed pairing tokens, scan-log access requires the QR's token, optional shared-token device auth, formula-injection-safe CSV export.
 - **Accessibility**: aria-live gesture announcements, labeled controls, keyboard-friendly nav.
-- **Resilience**: error boundary around the app, SW keeps AI models offline-capable,
-  outbox guarantees delivery across reconnects.
+- **Resilience**: error boundary around the app, SW keeps AI models offline-capable, outbox guarantees delivery across reconnects, ESP32 firmware retries undelivered SOS events until the server confirms.
+- **Efficiency**: ~30 FPS inference cap (halves CPU/battery vs naive 60 FPS), hidden-tab inference + polling suspension, adaptive SSE cadence that actually decays when idle, idle-time model prefetch so "Start Camera" is instant.
 
 ## License
 

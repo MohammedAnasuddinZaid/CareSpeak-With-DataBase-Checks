@@ -7,6 +7,7 @@ import {
   HelpCircle, Droplets, Sparkles, Activity, Fingerprint, Volume2,
 } from "lucide-react";
 import { useEyeGesture } from "@/hooks/useEyeGesture";
+import { preloadVisionAssets } from "@/lib/visionPreload";
 import { EYE_GESTURE_MAP } from "@/types";
 import { voiceAlert } from "@/lib/tts";
 import { getOrCreateSession } from "@/lib/session";
@@ -30,6 +31,11 @@ const GESTURE_GUIDE = [
 export default function EyeModePage() {
   const sessionRef = useRef(getOrCreateSession());
   const sessionId = sessionRef.current.sessionId;
+
+  // Warm the AI assets while the user reads the page — Start Camera feels instant.
+  useEffect(() => {
+    preloadVisionAssets("eye");
+  }, []);
 
   const { sendAlert, sendReply, sendPatientMetrics, status, transport, latestReply } = useLiveSync({ sessionId });
 
@@ -83,6 +89,8 @@ export default function EyeModePage() {
   useEffect(() => {
     if (!cameraOn) return;
     const t = setInterval(() => {
+      // While hidden, inference is paused — don't stamp stale metrics as fresh.
+      if (typeof document !== "undefined" && document.hidden) return;
       if (Object.keys(latestMetrics.current).length > 0) metricsSender.current(latestMetrics.current);
     }, 3000);
     return () => clearInterval(t);

@@ -20,7 +20,15 @@ export type EyeGesture = "YES" | "NO" | "HELP" | "WATER" | null;
 
 export type GestureType = "hand" | "eye" | "system";
 
-export type AlertSource = "camera" | "demo" | "iot" | "manual";
+export type AlertSource = "camera" | "demo" | "iot" | "manual" | "system";
+
+/** One scan of a patient's pairing QR code (nurse phone / companion device). */
+export interface PairScanInfo {
+  at: number;
+  ip: string;
+  device: string;
+  role: string;
+}
 
 export interface GestureResult<T> {
   gesture: T;

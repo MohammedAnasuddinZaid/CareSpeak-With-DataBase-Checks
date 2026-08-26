@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { BedDouble, RefreshCw, Activity, ArrowUpRight, HeartPulse } from "lucide-react";
+import { BedDouble, RefreshCw, Activity, ArrowUpRight, HeartPulse, Search, Siren, Smartphone } from "lucide-react";
 import { formatRelativeTime } from "@/components/uiConstants";
+import { playAlertSound } from "@/lib/alertSounds";
+import { isAlarmMuted } from "@/lib/nurseAlarm";
 
 interface WardRow {
   session: string;
@@ -18,6 +20,9 @@ interface WardRow {
   heartRate: number | null;
   spo2: number | null;
   sosActive: boolean;
+  linkedDevices?: number;
+  lastScanAt?: number | null;
+  lastScanIp?: string | null;
 }
 
 type Band = "critical" | "warning" | "active" | "idle";
@@ -32,6 +37,8 @@ function bandOf(r: WardRow): Band {
   return "idle";
 }
 
+const BAND_ORDER: Record<Band, number> = { critical: 0, warning: 1, active: 2, idle: 3 };
+
 const BAND_STYLE: Record<Band, { ring: string; chip: string; label: string }> = {
   critical: { ring: "border-[#d94a4a] bg-[#fef2f2]", chip: "bg-[#d94a4a] text-white", label: "CRITICAL" },
   warning: { ring: "border-[#e8993e] bg-[#fffbeb]", chip: "bg-[#e8993e] text-white", label: "NEEDS REVIEW" },
@@ -43,6 +50,9 @@ export default function WardPage() {
   const [rows, setRows] = useState<WardRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(Date.now());
+  const [bandFilter, setBandFilter] = useState<"all" | Band>("all");
+  const [query, setQuery] = useState("");
+  const originalTitle = useRef(typeof document !== "undefined" ? document.title : "CareSpeak");
 
   const load = useCallback(async () => {
     try {
@@ -57,16 +67,56 @@ export default function WardPage() {
 
   useEffect(() => {
     void load();
-    const poll = setInterval(() => void load(), 2500);
+    const poll = setInterval(() => {
+      // No point burning requests for a hidden tab; the 1s clock keeps bands
+      // fresh so the board is correct the instant it's visible again.
+      if (typeof document !== "undefined" && document.hidden) return;
+      void load();
+    }, 2500);
     const clock = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       clearInterval(poll);
       clearInterval(clock);
+      document.title = originalTitle.current;
     };
   }, [load]);
 
-  const counts = { critical: 0, warning: 0, active: 0, idle: 0 } as Record<Band, number>;
-  for (const r of rows) counts[bandOf(r)]++;
+  /* ── counts per band ── (`now` in deps: active/idle cutoffs age every second) */
+  const counts = useMemo(() => {
+    const c = { critical: 0, warning: 0, active: 0, idle: 0 } as Record<Band, number>;
+    for (const r of rows) c[bandOf(r)]++;
+    return c;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, now]);
+
+  /* ── new-critical alarm: one beep per increase, flashing tab title while any critical exists ── */
+  const criticalCount = counts.critical;
+  const prevCriticalRef = useRef(0);
+  useEffect(() => {
+    if (criticalCount > prevCriticalRef.current && !isAlarmMuted()) {
+      playAlertSound("EMERGENCY");
+    }
+    prevCriticalRef.current = criticalCount;
+
+    if (criticalCount > 0) {
+      document.title = `🚨 (${criticalCount}) Ward critical`;
+    } else {
+      document.title = originalTitle.current;
+    }
+  }, [criticalCount]);
+
+  /* ── severity-first ordering so the nurse walks to the right bed first ── */
+  const visibleRows = useMemo(() => {
+    let list = [...rows].sort((a, b) => {
+      const d = BAND_ORDER[bandOf(a)] - BAND_ORDER[bandOf(b)];
+      return d !== 0 ? d : b.lastSeen - a.lastSeen;
+    });
+    if (bandFilter !== "all") list = list.filter((r) => bandOf(r) === bandFilter);
+    const q = query.trim().toUpperCase();
+    if (q) list = list.filter((r) => r.session.includes(q));
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, bandFilter, query, now]);
 
   return (
     <div className="min-h-screen pt-20 pb-16">
@@ -87,21 +137,44 @@ export default function WardPage() {
           </button>
         </motion.div>
 
-        {/* summary strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+        {/* summary strip doubles as band filters */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
           {(
             [
-              ["critical", "Critical", counts.critical],
-              ["warning", "Needs review", counts.warning],
-              ["active", "Stable", counts.active],
-              ["idle", "Idle / offline", counts.idle],
-            ] as [Band, string, number][]
-          ).map(([band, label, n]) => (
-            <div key={band} className={`card p-4 border ${BAND_STYLE[band].ring}`}>
+              ["all", "All beds", rows.length, ""],
+              ["critical", "Critical", counts.critical, BAND_STYLE.critical.ring],
+              ["warning", "Needs review", counts.warning, BAND_STYLE.warning.ring],
+              ["active", "Stable", counts.active, BAND_STYLE.active.ring],
+              ["idle", "Idle / offline", counts.idle, BAND_STYLE.idle.ring],
+            ] as [("all" | Band), string, number, string][]
+          ).map(([band, label, n, ring]) => (
+            <button
+              key={band}
+              onClick={() => setBandFilter(band)}
+              aria-pressed={bandFilter === band}
+              className={`card p-4 border text-left transition-all ${ring || "border-transparent"} ${
+                bandFilter === band
+                  ? "ring-2 ring-[#c63a22]/40"
+                  : "hover:border-[#d5d5d5]"
+              }`}
+            >
               <div className="text-[10px] uppercase tracking-wider font-bold mb-1 text-[#6e6e6e]">{label}</div>
               <div className="text-2xl font-extrabold text-[#1f1f1f]">{n}</div>
-            </div>
+            </button>
           ))}
+        </div>
+
+        {/* session search */}
+        <div className="relative max-w-sm mb-6">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#6e6e6e]" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value.toUpperCase())}
+            placeholder="Find session ID…"
+            aria-label="Search sessions"
+            className="input w-full pl-9 font-mono uppercase tracking-widest"
+          />
         </div>
 
         {loading ? (
@@ -114,9 +187,11 @@ export default function WardPage() {
               Sessions appear here automatically the moment any device sends a gesture or vitals.
             </p>
           </div>
+        ) : visibleRows.length === 0 ? (
+          <div className="card p-12 text-center text-sm text-[#6e6e6e]">No beds match this filter.</div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {rows.map((r) => {
+            {visibleRows.map((r) => {
               const band = bandOf(r);
               const st = BAND_STYLE[band];
               return (
@@ -127,17 +202,22 @@ export default function WardPage() {
                   animate={{ opacity: 1, y: 0 }}
                   className={`rounded-3xl border ${st.ring} p-5 block transition-all hover:shadow-lg hover:-translate-y-0.5`}
                 >
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center justify-between mb-3 gap-2">
                     <span className="text-lg font-black tracking-[0.18em] text-[#1f1f1f] font-mono">{r.session}</span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${st.chip}`}>{st.label}</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${st.chip}`}>{st.label}</span>
                   </div>
-                  <div className="flex items-baseline gap-2 mb-3 min-h-[28px]">
+                  <div className="flex items-baseline gap-2 mb-3 min-h-[28px] flex-wrap">
                     <span className={`text-xl font-extrabold ${r.lastGesture === "EMERGENCY" || r.lastGesture === "HELP" ? "text-[#d94a4a]" : "text-[#1f1f1f]"}`}>
                       {r.lastGesture ?? "—"}
                     </span>
                     <span className="text-xs text-[#9ca3af]">
                       {r.lastAt ? formatRelativeTime(r.lastAt, now) : "no events yet"}
                     </span>
+                    {r.sosActive && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#dc2626] text-white text-[10px] font-bold animate-pulse">
+                        <Siren className="w-3 h-3" /> SOS
+                      </span>
+                    )}
                   </div>
                   <div className="grid grid-cols-4 gap-1.5 text-center mb-3">
                     {[
@@ -162,6 +242,18 @@ export default function WardPage() {
                       ) : (
                         <>All clear</>
                       )}
+                    </span>
+                    {/* per-bed QR pairing telemetry: which devices are linked */}
+                    <span
+                      className={`flex items-center gap-1 ${(r.linkedDevices ?? 0) > 0 ? "text-[#16855f] font-semibold" : ""}`}
+                      title={
+                        r.lastScanAt != null
+                          ? `Last scan ${formatRelativeTime(r.lastScanAt, now)} from ${r.lastScanIp ?? "unknown IP"}`
+                          : "No device has scanned this bed's QR yet"
+                      }
+                    >
+                      <Smartphone className="w-3 h-3" />
+                      {(r.linkedDevices ?? 0) > 0 ? `${r.linkedDevices} linked` : "unlinked"}
                     </span>
                     <span className="flex items-center gap-0.5 font-semibold text-[#c63a22]">
                       Console <ArrowUpRight className="w-3 h-3" />

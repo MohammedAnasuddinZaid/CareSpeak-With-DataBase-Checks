@@ -4,7 +4,7 @@ import { getSessionStore } from "@/lib/server/store";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const HOT_TICK_MS = 350;    // push cadence right after activity
+const HOT_TICK_MS = 350;    // push cadence right after a change
 const HOT_WINDOW_MS = 8000; // how long fast-polling persists after a change
 const IDLE_TICK_MS = 2200;  // cadence when nothing has happened for a while
 
@@ -13,6 +13,11 @@ const IDLE_TICK_MS = 2200;  // cadence when nothing has happened for a while
  * One persistent connection per dashboard; server pushes only new data.
  * Clients automatically fall back to interval polling if SSE is unavailable
  * (e.g. aggressive corporate proxies), so this degrades gracefully.
+ *
+ * Resume semantics: every data event carries an `id:` (the server-time cursor).
+ * When EventSource auto-reconnects the browser sends `Last-Event-ID`, so the
+ * stream resumes exactly where it left off instead of replaying history from
+ * the stale `?since=` the URL was built with.
  */
 export async function GET(request: NextRequest): Promise<Response> {
   const { searchParams } = new URL(request.url);
@@ -21,7 +26,13 @@ export async function GET(request: NextRequest): Promise<Response> {
     return new Response("Invalid session", { status: 400 });
   }
 
-  let cursor = Number(searchParams.get("since") ?? Date.now() - 60_000);
+  // `?since=` (empty value) used to parse as 0 and replay the ENTIRE store on
+  // the first tick — treat blank/malformed cursors as "last minute".
+  const fallback = Date.now() - 60_000;
+  const lastEventId = request.headers.get("last-event-id");
+  const rawSince = lastEventId ?? searchParams.get("since");
+  let cursor = rawSince === null || rawSince.trim() === "" ? fallback : Number(rawSince);
+  if (!Number.isFinite(cursor) || cursor < 0) cursor = fallback;
   // Replies have their OWN cursor — otherwise they'd be re-sent on every tick
   // until an unrelated gesture entry happened to advance the shared one.
   let replyCursor = cursor;
@@ -29,26 +40,50 @@ export async function GET(request: NextRequest): Promise<Response> {
   let closed = false;
   let loopTimer: ReturnType<typeof setTimeout> | null = null;
   let beatTimer: ReturnType<typeof setInterval> | null = null;
-  // Adaptive cadence: after any data change we tick fast (near-instant push),
-  // then decay to an idle rate to keep serverless/Upstash costs tiny.
+  // Adaptive cadence: after any DATA CHANGE we tick fast (near-instant push),
+  // then decay to an idle rate. (Testing mere presence of vitals kept every
+  // wearable-equipped session hot forever — 350ms polling for hours.)
   let hotUntil = 0;
   let lastSnapshot = "";
+  // Same-millisecond entries share a serverTime; a `>` cursor alone can skip
+  // them during bursts. Per-connection id memory makes delivery lossless
+  // regardless of clock granularity (bounded, FIFO-evicted).
+  const sentIds = new Set<string>();
+  const sentOrder: string[] = [];
 
   const stopLoop = () => {
     if (loopTimer) clearTimeout(loopTimer);
     loopTimer = null;
+  };
+  const stopBeat = () => {
+    if (beatTimer) clearInterval(beatTimer);
+    beatTimer = null;
   };
 
   const store = await getSessionStore();
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const send = (event: string, data: unknown) => {
+      const send = (event: string, data: unknown, id?: number | string) => {
         if (closed) return;
         try {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          const idLine = id !== undefined ? `id: ${id}\n` : "";
+          controller.enqueue(encoder.encode(`${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
         } catch {
           closed = true;
+          stopLoop();
+          stopBeat();
+        }
+      };
+      const markSent = (ids: string[]) => {
+        for (const id of ids) {
+          if (sentIds.has(id)) continue;
+          sentIds.add(id);
+          sentOrder.push(id);
+        }
+        while (sentOrder.length > 1000) {
+          const oldest = sentOrder.shift();
+          if (oldest !== undefined) sentIds.delete(oldest);
         }
       };
 
@@ -65,21 +100,25 @@ export async function GET(request: NextRequest): Promise<Response> {
             store.getVitals(session),
             store.getRepliesSince(session, replyCursor),
           ]);
+          const fresh = entries.filter((e) => !sentIds.has(e.id));
           const snapshot = JSON.stringify({ m: metrics, v: vitals });
-          if (entries.length > 0) {
-            cursor = Math.max(...entries.map((e) => e.serverTime ?? e.timestamp));
-            send("entries", entries);
+          if (fresh.length > 0) {
+            for (const e of fresh) {
+              const st = e.serverTime ?? e.timestamp;
+              if (st > cursor) cursor = st;
+            }
+            markSent(fresh.map((e) => e.id));
+            send("entries", fresh, cursor);
+            hotUntil = Date.now() + HOT_WINDOW_MS;
           }
           if (replies.length > 0) {
             replyCursor = Math.max(...replies.map((r) => r.timestamp));
-            send("replies", replies);
+            send("replies", replies, replyCursor);
+            hotUntil = Date.now() + HOT_WINDOW_MS;
           }
           if (snapshot !== lastSnapshot) {
             lastSnapshot = snapshot;
             send("state", { patientMetrics: metrics, vitals, serverTime: Date.now(), cursor });
-          }
-          if (entries.length > 0 || replies.length > 0 ||
-              Object.keys(metrics).length > 0 || Object.keys(vitals).length > 0) {
             hotUntil = Date.now() + HOT_WINDOW_MS;
           }
         } catch {
@@ -103,6 +142,8 @@ export async function GET(request: NextRequest): Promise<Response> {
             controller.enqueue(encoder.encode(`: keepalive ${Date.now()}\n\n`));
           } catch {
             closed = true;
+            stopBeat();
+            stopLoop();
           }
         }
       }, 15000);
@@ -110,7 +151,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       request.signal.addEventListener("abort", () => {
         closed = true;
         stopLoop();
-        if (beatTimer) clearInterval(beatTimer);
+        stopBeat();
         try {
           controller.close();
         } catch {}
@@ -119,7 +160,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     cancel() {
       closed = true;
       stopLoop();
-      if (beatTimer) clearInterval(beatTimer);
+      stopBeat();
     },
   });
 

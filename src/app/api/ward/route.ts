@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { getSessionStore } from "@/lib/server/store";
+import { getPairSummary } from "@/lib/server/pairing";
 
 export const dynamic = "force-dynamic";
 
 /**
  * Multi-patient ward overview.
  * GET /api/ward -> recently-active sessions with compact summaries so a single
- * nurse can monitor an entire ward from one screen. Pairs with /ward (UI).
+ * nurse can monitor an entire ward from one screen. Includes per-bed QR pairing
+ * telemetry (linked devices, last scan IP/time). Pairs with /ward (UI).
  */
 export async function GET(): Promise<NextResponse> {
   const store = await getSessionStore();
@@ -31,6 +33,7 @@ export async function GET(): Promise<NextResponse> {
           }
           const todayStart = new Date();
           todayStart.setHours(0, 0, 0, 0);
+          const pairing = getPairSummary(session);
           return {
             session,
             lastSeen,
@@ -44,6 +47,9 @@ export async function GET(): Promise<NextResponse> {
             heartRate: Object.values(vitals)[0]?.heartRate ?? null,
             spo2: Object.values(vitals)[0]?.spo2 ?? null,
             sosActive: !!Object.values(vitals)[0]?.sosActive,
+            linkedDevices: pairing.linkedDevices,
+            lastScanAt: pairing.lastScanAt,
+            lastScanIp: pairing.lastScanIp,
           };
         } catch {
           return {
@@ -59,6 +65,9 @@ export async function GET(): Promise<NextResponse> {
             heartRate: null as number | null,
             spo2: null as number | null,
             sosActive: false,
+            linkedDevices: 0,
+            lastScanAt: null as number | null,
+            lastScanIp: null as string | null,
           };
         }
       })

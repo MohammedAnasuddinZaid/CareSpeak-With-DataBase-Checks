@@ -15,6 +15,9 @@ const CLUTCH_CLOSE_MS = 5000;
 const RESTING_WINDOW_MS = 10000;
 const RESTING_THRESHOLD = 5;
 const RESTING_COOLDOWN_MS = 20000;
+/** ~30 FPS inference cap — see useHandGesture. Face landmarking at 478 points
+ *  is even heavier than hands; running it on every rAF tick wasted battery. */
+const MIN_INFERENCE_INTERVAL_MS = 33;
 
 function dist(a: Point, b: Point): number {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
@@ -48,6 +51,10 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
   const pauseState = useRef({ paused: false, closeStart: 0 });
   const lastFpsTime = useRef(0);
   const frameCount = useRef(0);
+  const lastInferTs = useRef(0);
+  const startingRef = useRef(false);
+  const onGestureRef = useRef(onGesture);
+  onGestureRef.current = onGesture;
 
   // Mutable values read inside the render loop — keeps the loop closure stable
   // (fixes the stale-closure bug where `confidence` was frozen at 0 forever).
@@ -132,6 +139,21 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
       return;
     }
 
+    // Battery saver: skip all inference while the tab is hidden (bedside laptops
+    // stay on for hours). The loop keeps ticking cheaply and resumes instantly.
+    if (typeof document !== "undefined" && document.hidden) {
+      animRef.current = requestAnimationFrame(processFrames);
+      return;
+    }
+
+    // ~30 FPS inference cap — see MIN_INFERENCE_INTERVAL_MS.
+    const nowP = performance.now();
+    if (nowP - lastInferTs.current < MIN_INFERENCE_INTERVAL_MS) {
+      animRef.current = requestAnimationFrame(processFrames);
+      return;
+    }
+    lastInferTs.current = nowP;
+
     // FPS meter
     frameCount.current++;
     const nowTs = performance.now();
@@ -157,6 +179,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
 
     let raw = null;
     let faceLm: Point[] | null = null;
+    let blinkingNow = false;
     if (hasFace) {
       faceLm = result.faceLandmarks[0].map((lm) => ({ x: lm.x, y: lm.y, z: lm.z ?? 0 }));
       const rawOff = computeAvgIrisOffset(faceLm, true);
@@ -169,7 +192,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
       // Self-tune the stabilizer's enter/exit bands to this user's jitter.
       stabilizerRef.current.tune(calibratorRef.current.spread);
       // Eyes reopening produce garbage iris readings for a few frames.
-      const blinkingNow = !!classified?.isBlinking;
+      blinkingNow = !!classified?.isBlinking;
       if (!blinkingNow && prevBlinkRef.current) stabilizerRef.current.markRecovery();
       prevBlinkRef.current = blinkingNow;
       // Hysteresis + glitch guard + debounce -> stable stream for the smoother.
@@ -221,19 +244,23 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     setGesture((prev) => (prev === smoothed.gesture ? prev : smoothed.gesture));
     setConfidence((prev) => (Math.abs(prev - smoothed.confidence) > 0.02 ? smoothed.confidence : prev));
 
-    // Clutch pause: eyes closed 5s
-    if (hasFace && raw === null && faceLm && smoothed.gesture === null) {
+    // Clutch pause: eyes closed 5s. Driven by the blink classifier itself —
+    // `raw` is never null while a face is tracked, and the smoother freezes its
+    // last gesture during blinks, so neither of those can gate a closure.
+    {
       const now = Date.now();
-      if (pauseState.current.closeStart === 0) pauseState.current.closeStart = now;
-      if (!pauseState.current.paused && now - pauseState.current.closeStart >= CLUTCH_CLOSE_MS) {
-        pauseState.current.paused = true;
-        setIsPaused(true);
-      }
-    } else if (raw !== null || smoothed.gesture !== null) {
-      pauseState.current.closeStart = 0;
-      if (pauseState.current.paused) {
-        pauseState.current.paused = false;
-        setIsPaused(false);
+      if (blinkingNow) {
+        if (pauseState.current.closeStart === 0) pauseState.current.closeStart = now;
+        if (!pauseState.current.paused && now - pauseState.current.closeStart >= CLUTCH_CLOSE_MS) {
+          pauseState.current.paused = true;
+          setIsPaused(true);
+        }
+      } else {
+        pauseState.current.closeStart = 0;
+        if (pauseState.current.paused) {
+          pauseState.current.paused = false;
+          setIsPaused(false);
+        }
       }
     }
 
@@ -244,7 +271,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
         if (entry && smoothed.gesture !== lastLoggedGesture.current) {
           lastLoggedGesture.current = smoothed.gesture;
           voiceAlert.speak(smoothed.gesture, "eye");
-          if (onGesture) onGesture(smoothed.gesture, entry.description, smoothed.confidence);
+          if (onGestureRef.current) onGestureRef.current(smoothed.gesture, entry.description, smoothed.confidence);
           else addGestureLog(smoothed.gesture, entry.description, smoothed.confidence, "eye", voiceAlert.getLanguage());
         }
       }
@@ -267,7 +294,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
 
     drawOverlay(video, faceLm ?? null, !!hasFace);
     animRef.current = requestAnimationFrame(processFrames);
-  }, [onGesture]);
+  }, []);
 
   function drawOverlay(video: HTMLVideoElement, faceLm: Point[] | null, hasFace: boolean) {
     const canvas = canvasRef.current;
@@ -280,6 +307,12 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
       canvas.width = w;
       canvas.height = h;
     }
+    // Mirror the frame to match the CSS-flipped video element — without this
+    // the eye-mode self-view was unmirrored while hand-mode was, so gaze
+    // directions felt inverted between the two consoles.
+    ctx.save();
+    ctx.translate(w, 0);
+    ctx.scale(-1, 1);
     ctx.drawImage(video, 0, 0);
 
     if (pauseState.current.paused) {
@@ -292,10 +325,14 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
       ctx.font = "15px Inter, sans-serif";
       ctx.fillStyle = "rgba(226,232,240,0.85)";
       ctx.fillText("Keep eyes open to resume", w / 2, h / 2 + 28);
+      ctx.restore();
       return;
     }
 
-    if (!faceLm || !hasFace) return;
+    if (!faceLm || !hasFace) {
+      ctx.restore();
+      return;
+    }
     const conf = Math.max(0.3, liveRef.current.confidence);
 
     ctx.strokeStyle = "rgba(34,197,94,0.5)";
@@ -318,42 +355,50 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
       ctx.arc(faceLm[i].x * w, faceLm[i].y * h, 1.5, 0, 2 * Math.PI);
       ctx.fill();
     }
+    ctx.restore();
   }
 
   const startCamera = useCallback(async () => {
     setError(null);
-    const ok = await ensureLandmarker();
-    if (!ok) return;
-    const video = videoRef.current;
-    if (!video) {
-      setError("Camera panel is not ready — please refresh the page and try again.");
-      return;
-    }
+    if (startingRef.current || cameraOn) return; // double-click stream leak guard
+    startingRef.current = true;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: "user" },
-      });
-      video.srcObject = stream;
-      streamRef.current = stream;
-      await video.play();
-      setCameraOn(true);
-      if (!runningRef.current) {
-        runningRef.current = true;
-        animRef.current = requestAnimationFrame(processFrames);
+      const ok = await ensureLandmarker();
+      if (!ok) return;
+      const video = videoRef.current;
+      if (!video) {
+        setError("Camera panel is not ready — please refresh the page and try again.");
+        return;
       }
-    } catch (e) {
-      const name = (e as DOMException)?.name ?? "";
-      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setError("Camera permission denied. Click the camera icon in the address bar, allow access, then press Start Camera again.");
-      } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-        setError("No camera found. Connect a webcam (or enable it in device settings) and try again.");
-      } else if (name === "NotReadableError" || name === "TrackStartError") {
-        setError("Camera is busy. Close other apps using it (Zoom / Meet / Teams / another tab), then try again.");
-      } else {
-        setError("Could not start the camera. Use Chrome or Edge over localhost/HTTPS, allow camera access, and retry.");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: "user" },
+        });
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        video.srcObject = stream;
+        streamRef.current = stream;
+        await video.play();
+        setCameraOn(true);
+        if (!runningRef.current) {
+          runningRef.current = true;
+          animRef.current = requestAnimationFrame(processFrames);
+        }
+      } catch (e) {
+        const name = (e as DOMException)?.name ?? "";
+        if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+          setError("Camera permission denied. Click the camera icon in the address bar, allow access, then press Start Camera again.");
+        } else if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+          setError("No camera found. Connect a webcam (or enable it in device settings) and try again.");
+        } else if (name === "NotReadableError" || name === "TrackStartError") {
+          setError("Camera is busy. Close other apps using it (Zoom / Meet / Teams / another tab), then try again.");
+        } else {
+          setError("Could not start the camera. Use Chrome or Edge over localhost/HTTPS, allow camera access, and retry.");
+        }
       }
+    } finally {
+      startingRef.current = false;
     }
-  }, [ensureLandmarker, processFrames]);
+  }, [ensureLandmarker, processFrames, cameraOn]);
 
   const stopCamera = useCallback(() => {
     runningRef.current = false;

@@ -1,18 +1,35 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Printer, ArrowLeft, FileText } from "lucide-react";
+import { Printer, ArrowLeft, FileText, CloudDownload } from "lucide-react";
 import { loadGestureLog } from "@/lib/gestureLog";
 import { computeStats, hourlyDistribution, toCsv } from "@/lib/analytics";
 import { GestureLogEntry } from "@/types";
+import { getSession } from "@/lib/session";
+
+/** Server entries carry a single `status` field; map it onto the boolean
+ *  lifecycle flags the rest of the client expects. */
+function entryFromStored(s: GestureLogEntry & { status?: string }): GestureLogEntry {
+  const status = s.status ?? "none";
+  return {
+    ...s,
+    acknowledged: s.acknowledged || status === "acknowledge" || status === "resolve",
+    escalated: s.escalated || status === "escalate",
+    resolved: s.resolved || status === "resolve",
+    resolvedAt: status === "resolve" ? s.resolvedAt ?? (s.serverTime ?? s.timestamp) : s.resolvedAt,
+  };
+}
 
 export default function ReportPage() {
   const [log, setLog] = useState<GestureLogEntry[]>([]);
   const [patientName, setPatientName] = useState("");
   const [ward, setWard] = useState("");
+  const [syncedCount, setSyncedCount] = useState<number | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // Local history first (instant paint), then merge authoritative server
+    // history so a nurse printing from ANY paired device gets the full shift.
     setLog(loadGestureLog());
     try {
       const saved = localStorage.getItem("carespeak_report_meta");
@@ -22,6 +39,30 @@ export default function ReportPage() {
         setWard(meta.ward ?? "");
       }
     } catch {}
+
+    const session = getSession()?.sessionId;
+    if (!session) return;
+    let cancelled = false;
+    fetch(`/api/sync?session=${encodeURIComponent(session)}&since=0`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { entries?: (GestureLogEntry & { status?: string })[] } | null) => {
+        if (cancelled || !data?.entries?.length) return;
+        const serverEntries = data.entries.map(entryFromStored);
+        setSyncedCount(serverEntries.length);
+        setLog((prevLocal) => {
+          const byId = new Map<string, GestureLogEntry>();
+          for (const e of prevLocal) byId.set(e.id, e); // local first…
+          for (const e of serverEntries) byId.set(e.id, e); // …server wins (authoritative)
+          const merged = [...byId.values()].sort(
+            (a, b) => b.timestamp - a.timestamp
+          );
+          return merged;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const stats = useMemo(() => computeStats(log), [log]);
@@ -62,6 +103,11 @@ export default function ReportPage() {
               <span className="text-xs text-[#9ca3af]">Generated {new Date().toLocaleString()}</span>
             </div>
             <p className="text-xs text-[#6e6e6e] mt-1">Auto-generated communication &amp; alert record for the current session.</p>
+            {syncedCount != null && (
+              <p className="text-[11px] text-[#22a67e] mt-1 flex items-center gap-1">
+                <CloudDownload className="w-3 h-3" /> {syncedCount} events synced from the CareSpeak server (full shift, any device)
+              </p>
+            )}
           </header>
 
           <section className="grid grid-cols-2 gap-4 mb-6 no-print">

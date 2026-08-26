@@ -1,5 +1,4 @@
 import { GestureLogEntry, GestureType } from "@/types";
-import { enqueue } from "./outbox";
 
 const STORAGE_KEY = "carespeak_gesture_log";
 const MAX_ENTRIES = 300;
@@ -42,7 +41,10 @@ export interface AddGestureLogOptions {
 
 /**
  * Persist + locally broadcast a gesture. Network fan-out belongs to
- * NetworkSync.sendAlert so every alert is transmitted exactly once.
+ * NetworkSync.sendAlert so every alert is transmitted exactly once — this
+ * function deliberately does NOT touch the outbox (it used to enqueue AND
+ * sendAlert posted directly, so every alert crossed the network twice and the
+ * duplicate could wipe a nurse's acknowledgement server-side).
  */
 export function addGestureLog(
   gesture: string,
@@ -69,7 +71,6 @@ export function addGestureLog(
   try {
     getChannel()?.postMessage({ kind: "new_gesture", entry, sessionId: opts.sessionId });
   } catch {}
-  void enqueue({ channel: "alert", body: { type: "new_gesture", entry } });
   return entry;
 }
 

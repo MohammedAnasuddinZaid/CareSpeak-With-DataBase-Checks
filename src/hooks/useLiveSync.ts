@@ -58,6 +58,11 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
       syncRef.current = null;
       return;
     }
+    // Session identity changed: drop the previous patient's metrics/vitals so
+    // switching beds never shows stale data from the last one.
+    setRemoteMetrics({});
+    setVitals({});
+    setLatestReply(null);
     const sync = createNetworkSync({
       sessionId,
       onAlert: (e) => alertCb.current?.(e),

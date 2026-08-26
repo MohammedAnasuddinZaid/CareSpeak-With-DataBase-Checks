@@ -1,5 +1,6 @@
 import { SupportedLanguage, LANGUAGE_DESCRIPTIONS, GestureType, TTSConfig } from "@/types";
 import { playAlertSound } from "./alertSounds";
+import { notifyUiLanguageChanged } from "./i18n";
 
 const LANG_KEY = "carespeak_language";
 const CONFIG_KEY = "carespeak_tts_config";
@@ -271,6 +272,7 @@ export class VoiceAlert {
     this.config.language = lang;
     saveTTSConfig(this.config);
     saveLanguage(lang);
+    notifyUiLanguageChanged(); // re-render every i18n-aware component
     void ensureVoices().then(() => {
       doSpeak(GREETINGS[lang] ?? GREETINGS["en-US"], lang);
     });

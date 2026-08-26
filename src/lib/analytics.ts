@@ -28,6 +28,14 @@ export function computeStats(entries: GestureLogEntry[], now = Date.now()): LogS
   return { total: entries.length, today, unacknowledged, escalated, byGesture, byType };
 }
 
+/** Local-midnight day key — UTC bucketing assigned evening events to the wrong
+ *  day for every UTC+X user (i.e. all of India), contradicting the "Today"
+ *  stat computed on local midnight right next to it. */
+function localDateKey(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export function dailyGestureCounts(
   entries: GestureLogEntry[],
   days: number,
@@ -37,7 +45,7 @@ export function dailyGestureCounts(
   const map = new Map<string, { date: string; count: number; gesture: string }>();
   for (const e of entries) {
     if (e.timestamp < cutoff) continue;
-    const dateStr = new Date(e.timestamp).toISOString().slice(0, 10);
+    const dateStr = localDateKey(e.timestamp);
     const key = `${dateStr}_${e.gesture}`;
     const found = map.get(key);
     if (found) found.count++;
@@ -79,6 +87,13 @@ export function computeTrends(entries: GestureLogEntry[], now = Date.now()) {
   return { total: entries.length, today, change, direction };
 }
 
+/** Neutralize spreadsheet formula injection: a cell beginning with =,+,-,@
+ *  would execute as a formula when the CSV is opened in Excel. */
+function csvSafe(v: unknown): string {
+  const s = String(v);
+  return /^[=+@-]/.test(s) ? `'${s}` : s;
+}
+
 export function toCsv(entries: GestureLogEntry[]): string {
   const header = ["id", "timestamp", "iso_time", "gesture", "type", "confidence", "language", "source", "acknowledged", "escalated", "resolved"];
   const rows = entries.map((e) =>
@@ -95,7 +110,7 @@ export function toCsv(entries: GestureLogEntry[]): string {
       e.escalated ? "yes" : "no",
       e.resolved ? "yes" : "no",
     ]
-      .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+      .map((v) => `"${csvSafe(v).replace(/"/g, '""')}"`)
       .join(",")
   );
   return [header.join(","), ...rows].join("\n");

@@ -58,6 +58,9 @@ const unsigned long POST_INTERVAL_MS = 15000;
 unsigned long lastDebounce = 0;
 bool sosActive = false;
 unsigned long sosLatchedAt = 0;   // one-shot SOS: posted once, latched for vitals flag
+bool sosPending = false;          // SOS dispatch not yet confirmed by the server
+unsigned long lastSosRetry = 0;
+const unsigned long SOS_RETRY_MS = 4000;   // retry backoff for undelivered emergencies
 
 // ════════════════════════════════════════════════════════════════
 void setup() {
@@ -83,6 +86,13 @@ void loop() {
 
   readHeartRate();
   pollSosButton();
+
+  // A lost EMERGENCY is unacceptable: if the SOS POST failed (Wi-Fi blip,
+  // server restart), retry with backoff until the server confirms delivery.
+  if (sosPending && millis() - lastSosRetry >= SOS_RETRY_MS) {
+    Serial.println("!! SOS undelivered — retrying dispatch");
+    postEvent("sos");
+  }
 
   if (millis() - lastPost >= POST_INTERVAL_MS) {
     lastPost = millis();
@@ -138,7 +148,7 @@ void pollSosButton() {
     sosActive = true;
     sosLatchedAt = millis();
     Serial.println("!! SOS PRESSED — dispatching EMERGENCY");
-    postEvent("sos");                              // posted exactly once per press
+    postEvent("sos");                              // posted once per press; retried if unconfirmed
     lastPost = millis();
   }
   lastState = current;
@@ -167,7 +177,7 @@ void postVitals() {
   body += "\"type\":\"vitals\",";
   if (beatAvg > 0) body += "\"heartRate\":" + String(beatAvg) + ",";
   body += "\"sosActive\":" + String(sosActive ? "true" : "false") + ",";
-  body += "\"batteryPct\":" + String(batteryPct) + ",";
+  if (batteryPct >= 0) body += "\"batteryPct\":" + String(batteryPct) + ",";
   body += "\"rssi\":" + String(WiFi.RSSI());
   body += "}";
 
@@ -191,11 +201,21 @@ void postEvent(const char* type) {
   int code = http.POST(body);
   Serial.printf("POST %s -> %d\n", type, code);
   http.end();
+
+  // Delivery tracking: only an HTTP 2xx counts as delivered. Anything else
+  // arms the retry loop in loop() so the emergency is never silently lost.
+  if (String(type) == "sos") {
+    bool ok = code >= 200 && code < 300;
+    sosPending = !ok;
+    lastSosRetry = millis();
+    if (!ok) Serial.println("!! SOS dispatch FAILED — will retry");
+  }
 }
 
 int readBatteryPercent() {
-  // Replace with ADC divider reading if you add battery monitoring:
-  // analogReadMilliVolts(GPIO34) * dividerRatio mapped to 3.0–4.2 V range.
-  return 100;
+  // Wire an ADC divider to GPIO34 and map 3.0-4.2 V -> 0-100% here.
+  // Returning -1 means "no sensor" — postVitals() omits the field so the
+  // dashboard shows "unknown" instead of a false full battery.
+  return -1;
 }
 

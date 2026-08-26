@@ -3,5 +3,10 @@
   "buildCommand": "next build",
   "outputDirectory": ".next",
   "installCommand": "npm install",
-  "devCommand": "next dev"
+  "devCommand": "next dev",
+  "functions": {
+    "src/app/api/stream/route.ts": {
+      "maxDuration": 60
+    }
+  }
 }

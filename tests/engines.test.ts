@@ -46,7 +46,8 @@ describe("EyeGestureSmoother", () => {
       s.push({ gesture: null, confidence: 0, isBlinking: true }); // 0ms duration
       s.push({ gesture: null, confidence: 0, isBlinking: false });
     }
-    expect(s.push({ gesture: "YES", confidence: 0.9 }).gesture === "YES" || true).toBe(true);
+    const after = s.push({ gesture: "YES", confidence: 0.9, isBlinking: false });
+    expect(after.gesture === "YES" || after.gesture === null).toBe(true);
   });
 
   it("blink hysteresis is per-instance (no cross-talk)", () => {
@@ -121,8 +122,8 @@ describe("GazeStabilizer (micro-saccade hysteresis)", () => {
 
   it("blocks weak flicker from entering", () => {
     const s = new GazeStabilizer();
-    expect(s.filter(res(-0.02, null)).gesture).toBeNull();
-    expect(s.filter(res(-0.045, "YES")).gesture).toBeNull(); // below ENTER band
+    expect(s.filter(res(-0.02, null))?.gesture ?? null).toBeNull();
+    expect(s.filter(res(-0.045, "YES"))?.gesture ?? null).toBeNull(); // below ENTER band
   });
 
   it("holds the direction through sign-flapping frames", () => {
@@ -131,66 +132,66 @@ describe("GazeStabilizer (micro-saccade hysteresis)", () => {
     const seq = [-0.04, -0.06, -0.035, -0.08];
     for (const dx of seq) {
       const out = s.filter(res(dx, "YES"));
-      expect(out.gesture).toBe("YES");
+      expect(out?.gesture ?? null).toBe("YES");
     }
   });
 
   it("releases only when the offset genuinely relaxes (no ghost re-fire)", () => {
     const s = new GazeStabilizer();
     s.filter(res(-0.07, "YES"));
-    expect(s.filter(res(-0.01, null)).gesture).toBeNull(); // released via neutral frame
-    expect(s.filter(res(-0.045, "YES")).gesture).toBeNull(); // ghost blocked after release
+    expect(s.filter(res(-0.01, null))?.gesture ?? null).toBeNull(); // released via neutral frame
+    expect(s.filter(res(-0.045, "YES"))?.gesture ?? null).toBeNull(); // ghost blocked after release
   });
 
   it("switches direction only on debounced, full-strength counter evidence", () => {
     const s = new GazeStabilizer();
     s.filter(res(-0.07, "YES"));
     // single NO frame at full strength is treated as a spike -> still YES
-    expect(s.filter(res(0.08, "NO")).gesture).toBe("YES");
+    expect(s.filter(res(0.08, "NO"))?.gesture ?? null).toBe("YES");
     // second consecutive NO frame confirms a deliberate switch
-    expect(s.filter(res(0.08, "NO")).gesture).toBe("NO");
-    expect(s.filter(res(0.04, "NO")).gesture).toBe("NO"); // held through decay band
-    expect(s.filter(res(0.005, null)).gesture).toBeNull(); // then released
+    expect(s.filter(res(0.08, "NO"))?.gesture ?? null).toBe("NO");
+    expect(s.filter(res(0.04, "NO"))?.gesture ?? null).toBe("NO"); // held through decay band
+    expect(s.filter(res(0.005, null))?.gesture ?? null).toBeNull(); // then released
   });
 
   it("a single violent landmark spike cannot steal or create a state", () => {
     const s = new GazeStabilizer();
     s.filter(res(-0.07, "YES"));
     // spike frame is discarded (nulled); the smoother majority keeps YES alive
-    expect(s.filter(res(0.35, "NO")).gesture).toBeNull();
-    expect(s.filter(res(-0.06, "YES")).gesture).toBe("YES"); // signal intact
+    expect(s.filter(res(0.35, "NO"))?.gesture ?? null).toBeNull();
+    expect(s.filter(res(-0.06, "YES"))?.gesture ?? null).toBe("YES"); // signal intact
   });
 
   it("an impossible inter-frame jump is discarded as a glitch frame", () => {
     const s = new GazeStabilizer();
     const first = s.filter(res(-0.07, "YES"));
-    expect(first.gesture).toBe("YES");
+    expect(first?.gesture ?? null).toBe("YES");
     const glitched = s.filter(res(0.30, "NO"));
-    expect(glitched.gesture).toBeNull(); // jump of 0.37 > 0.28 physical limit
+    expect(glitched?.gesture ?? null).toBeNull(); // jump of 0.37 > 0.28 physical limit
   });
 
   it("post-blink refractory suppresses reopening garbage", () => {
     const s = new GazeStabilizer();
     const t0 = 10_000;
     s.markRecovery(t0);
-    expect(s.filter(res(-0.09, "YES"), t0 + 50).gesture).toBeNull(); // inside refractory
-    expect(s.filter(res(-0.09, "YES"), t0 + 200).gesture).toBe("YES"); // settled -> accepted
+    expect(s.filter(res(-0.09, "YES"), t0 + 50)?.gesture ?? null).toBeNull(); // inside refractory
+    expect(s.filter(res(-0.09, "YES"), t0 + 200)?.gesture ?? null).toBe("YES"); // settled -> accepted
   });
 
   it("adaptive bands scale with the user's measured jitter", () => {
     const twitchy = new GazeStabilizer();
     twitchy.tune({ sx: 0.02, sy: 0.02 }); // noisy user -> enterX ≈ 3.2*0.02+0.015
-    expect(twitchy.filter(res(0.06, "NO")).gesture).toBeNull(); // below their band
+    expect(twitchy.filter(res(0.06, "NO"))?.gesture ?? null).toBeNull(); // below their band
     const steady = new GazeStabilizer();
     steady.tune({ sx: 0.004, sy: 0.004 }); // steady user -> floor 0.05 applies
-    expect(steady.filter(res(0.06, "NO")).gesture).toBe("NO");
+    expect(steady.filter(res(0.06, "NO"))?.gesture ?? null).toBe("NO");
   });
 
   it("lets mouth-driven WATER pass untouched (regression)", () => {
     // Mouth-open WATER has no gaze offsets; hysteresis must not swallow it.
     const s = new GazeStabilizer();
     const out = s.filter({ gesture: "WATER", confidence: 1, isBlinking: false, dx: 0.004, dy: -0.003 });
-    expect(out.gesture).toBe("WATER");
+    expect(out?.gesture ?? null).toBe("WATER");
   });
 });
 

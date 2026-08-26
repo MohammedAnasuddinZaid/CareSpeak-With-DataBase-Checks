@@ -1,12 +1,12 @@
-import { GestureLogEntry } from "@/types";
-
 /**
  * Predictive deterioration trajectory.
  *
- * Holt's double-exponential smoothing (level + trend) over the recent vital /
- * wellness stream, projected 15 minutes ahead against clinical thresholds.
- * Deliberately simple, explainable math: a nurse can ask "why?" and get a
- * one-line answer, unlike any black-box model.
+ * Damped Holt double-exponential smoothing (level + trend, Gardner–McKenzie)
+ * over the recent vital / wellness stream, projected 15 minutes ahead against
+ * clinical thresholds. Median-of-3 despiking rejects single-frame sensor
+ * glitches; a residual-noise (2σ) gate stops flat-but-noisy signals from being
+ * declared "trending". Deliberately simple, explainable math: a nurse can ask
+ * "why?" and get a one-line answer, unlike any black-box model.
  */
 
 export interface VitalSample {
@@ -35,17 +35,79 @@ const THRESHOLDS: Record<string, { min?: number; max?: number; weight: number; l
   movement: { min: 0.05, weight: 10, label: "Movement" },
 };
 
-/** Holt's linear method — robust enough for 30-120 sparse samples. */
-function holt(values: number[], alpha = 0.4, beta = 0.2): { level: number; trend: number } {
-  if (values.length === 0) return { level: NaN, trend: 0 };
+/**
+ * Median-of-3 despike: a single glitchy sensor frame (motion artefact, BLE
+ * hiccup) must not drag Holt's level with it. Median filters pass monotone
+ * trends untouched but kill isolated spikes — the standard pre-smoother for
+ * biomedical signals.
+ */
+function despike(values: number[]): number[] {
+  if (values.length < 3) return values.slice();
+  const out = new Array<number>(values.length);
+  out[0] = values[0];
+  out[values.length - 1] = values[values.length - 1];
+  for (let i = 1; i < values.length - 1; i++) {
+    const a = values[i - 1];
+    const b = values[i];
+    const c = values[i + 1];
+    out[i] = a <= b ? (b <= c ? b : a <= c ? c : a) : a <= c ? a : b <= c ? c : b;
+  }
+  return out;
+}
+
+/** Root-mean-square of one-step forecast residuals — how noisy is this signal? */
+function rmseOfResiduals(values: number[], level: number, trend: number, alpha: number, beta: number): number {
+  let l = values[0];
+  let t = trend;
+  let sq = 0;
+  let n = 0;
+  for (let i = 1; i < values.length; i++) {
+    const forecast = l + t;
+    const err = values[i] - forecast;
+    sq += err * err;
+    n++;
+    const prevL = l;
+    l = alpha * values[i] + (1 - alpha) * (l + t);
+    t = beta * (l - prevL) + (1 - beta) * t;
+  }
+  void level;
+  return n > 0 ? Math.sqrt(sq / n) : 0;
+}
+
+/**
+ * Damped Holt's linear method (Gardner–McKenzie). A pure linear trend
+ * extrapolated 15 minutes ahead wildly over-claims for noisy vitals; damping
+ * every future step by φ ∈ (0,1) converges the projection toward a realistic
+ * ceiling: sum_{h=1..H} trend·φ^h instead of trend·H.
+ */
+function holt(
+  values: number[],
+  alpha = 0.4,
+  beta = 0.2,
+  phi = 0.85
+): { level: number; trend: number; noise: number } {
+  if (values.length === 0) return { level: NaN, trend: 0, noise: 0 };
   let level = values[0];
   let trend = 0;
   for (let i = 1; i < values.length; i++) {
     const prev = level;
-    level = alpha * values[i] + (1 - alpha) * (level + trend);
-    trend = beta * (level - prev) + (1 - beta) * trend;
+    level = alpha * values[i] + (1 - alpha) * (level + phi * trend);
+    trend = beta * (level - prev) + (1 - beta) * phi * trend;
   }
-  return { level, trend };
+  // Noisy signals get a slower trend response (adaptive smoothing).
+  const noise = rmseOfResiduals(values, level, trend, alpha, beta);
+  return { level, trend, noise };
+}
+
+/** Projected value h minutes ahead under a damped trend. */
+function dampedProjection(level: number, trend: number, phi: number, horizon: number): number {
+  let sum = 0;
+  let t = trend;
+  for (let h = 1; h <= horizon; h++) {
+    sum += t;
+    t *= phi;
+  }
+  return level + sum;
 }
 
 export function forecastDeterioration(samples: VitalSample[]): ForecastResult {
@@ -65,19 +127,26 @@ export function forecastDeterioration(samples: VitalSample[]): ForecastResult {
 
   const HORIZON = 15; // minutes ahead
   const SOON = 30; // "approaching" window
+  const PHI = 0.85; // trend damping per minute
 
   for (const [key, series] of Object.entries(signals)) {
     if (series.length < 4) continue;
     const th = THRESHOLDS[key];
-    const { level, trend } = holt(series.slice(-40));
+    const despiked = despike(series.slice(-40));
+    const { level, trend, noise } = holt(despiked);
     if (!Number.isFinite(level)) continue;
-    const p = Math.round((level + trend * HORIZON) * 100) / 100;
+    const p = Math.round(dampedProjection(level, trend, PHI, HORIZON) * 100) / 100;
     projected[key] = p;
+
+    // A trend smaller than the signal's own noise floor is statistically
+    // indistinguishable from flat — never claim "approaching limit" off it.
+    // (2σ ≈ 95% confidence under roughly-normal residuals.)
+    const meaningfulTrend = Math.abs(trend) > 2 * noise / Math.max(1, Math.sqrt(despiked.length));
 
     // minutes until the smoothed LEVEL crosses a limit at the current trend
     let crossedIn = Infinity;
-    if (th.min != null && trend < 0 && level > th.min) crossedIn = (level - th.min) / -trend;
-    if (th.max != null && trend > 0 && level < th.max) crossedIn = (th.max - level) / trend;
+    if (meaningfulTrend && th.min != null && trend < 0 && level > th.min) crossedIn = (level - th.min) / -trend;
+    if (meaningfulTrend && th.max != null && trend > 0 && level < th.max) crossedIn = (th.max - level) / trend;
 
     const belowNow = (th.min != null && level < th.min) || (th.max != null && level > th.max);
     const approaching = !belowNow && Number.isFinite(crossedIn) && crossedIn <= SOON;
@@ -116,5 +185,3 @@ export function bandRank(b: ForecastResult["band"]): number {
 export function trajectoryAlertText(f: ForecastResult): string {
   return `Deterioration trajectory ${f.score}/100 (${f.band}) — ${f.reasons.slice(0, 3).join("; ")}`;
 }
-
-export type { GestureLogEntry };

@@ -105,12 +105,24 @@ export default function NurseViewPage() {
 
   /* ── pairing: ?session= QR param ALWAYS wins over any stale saved session ── */
   useEffect(() => {
-    const urlSession = new URLSearchParams(window.location.search).get("session");
+    const params = new URLSearchParams(window.location.search);
+    const urlSession = params.get("session");
     if (urlSession && /^[A-Z0-9_-]{3,32}$/.test(urlSession.trim().toUpperCase())) {
       const id = urlSession.trim().toUpperCase();
       setSessionId(id); // overwrite stale pairing in localStorage
       setSessionInput(id);
       setPaired(true);
+      // Unique-QR tracking: report this scan so the patient console + ward board
+      // see exactly which device linked to this bed (IP + device, once per tab).
+      const pair = params.get("pair") ?? "";
+      if (pair && !sessionStorage.getItem(`carespeak_scan_${id}_${pair}`)) {
+        sessionStorage.setItem(`carespeak_scan_${id}_${pair}`, "1");
+        void fetch("/api/pair", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "scan", session: id, pair, role: "nurse" }),
+        }).catch(() => {});
+      }
       return;
     }
     const existing = getSession();
@@ -155,45 +167,12 @@ export default function NurseViewPage() {
   );
   logRef.current = log;
 
-  useEffect(() => {
-    const logRefCurrent = () => logRef.current;
-    const evaluate = () => {
-      const snapshot = logRefCurrent();
-      const decisions = evaluateEscalations(snapshot, primaryMetrics, Date.now());
-      if (decisions.length === 0) return;
-      const byId = new Map(decisions.map((d) => [d.entryId, d]));
-
-      // pure state transition
-      setLog((prevLog) => {
-        let changed = false;
-        const next = prevLog.map((e) => {
-          const d = byId.get(e.id);
-          if (!d || e.escalated || e.resolved) return e;
-          changed = true;
-          return { ...e, escalated: true, escalatedBy: "system" as const, escalatedRule: d.rule, escalatedAt: Date.now() };
-        });
-        return changed ? next : prevLog;
-      });
-
-      // side effects outside the updater
-      for (const e of snapshot) {
-        const d = byId.get(e.id);
-        if (!d || e.escalated || e.resolved) continue;
-        sendAction({
-          type: "escalate",
-          entryId: e.id,
-          timestamp: Date.now(),
-          actor: "CareSpeak Engine",
-          bySystem: true,
-        });
-        setAutoNotes((notes) =>
-          [`${new Date().toLocaleTimeString()} · Auto-escalated ${e.gesture} — ${d.reason}`, ...notes].slice(0, 6)
-        );
-      }
-    };
-    const t = setInterval(evaluate, 10000);
-    return () => clearInterval(t);
-  }, [primaryMetrics, sendAction]);
+  /* NOTE: the escalation / escalation-chain / trajectory engines run in ONE
+   * consolidated interval further down ("Automation Engine"). They used to live
+   * in effects keyed on `primaryMetrics`, which changes identity on EVERY
+   * metrics push (~3s) — tearing down each interval before it ever fired and
+   * silently disabling both engines during live monitoring. Refs break that
+   * dependency while keeping the tick logic pure and readable. */
 
   /* ── audible siren while any EMERGENCY is unacknowledged ── */
   const [alarmMutedState, setAlarmMutedState] = useState(isAlarmMuted());
@@ -241,53 +220,9 @@ export default function NurseViewPage() {
     return () => window.removeEventListener("pointerdown", ask);
   }, [paired]);
 
-  /* ── closed-loop escalation chain: EMERGENCY unacknowledged for 60s ── */
+  /* ── closed-loop escalation chain: EMERGENCY unacknowledged for 60s ──
+   * (scan logic lives in the consolidated Automation Engine below) */
   const chainNotifiedRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    const scan = () => {
-      const now = Date.now();
-      for (const e of logRef.current) {
-        if (e.gesture !== "EMERGENCY" || e.resolved || e.acknowledged) continue;
-        if (now - e.timestamp < 60_000) continue;
-        if (chainNotifiedRef.current.has(e.id)) continue;
-        chainNotifiedRef.current.add(e.id);
-        if (chainNotifiedRef.current.size > 200) chainNotifiedRef.current.clear();
-
-        sendAction({
-          type: "escalate",
-          entryId: e.id,
-          timestamp: Date.now(),
-          actor: "Escalation Chain",
-          bySystem: true,
-        });
-        setAutoNotes((notes) =>
-          [
-            `${new Date().toLocaleTimeString()} · ⛓ No ack in 60s — escalation chain fired (WhatsApp/SMS dispatch attempted)`,
-            ...notes,
-          ].slice(0, 6)
-        );
-        // Fire-and-forget dispatch; logs to server console when no provider keys are set.
-        void fetch("/api/notify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            session: sessionInput,
-            patient: sessionInput,
-            gesture: e.gesture,
-            contacts: (() => {
-              try {
-                return JSON.parse(localStorage.getItem("carespeak_contacts") ?? "[]") as string[];
-              } catch {
-                return [] as string[];
-              }
-            })(),
-          }),
-        }).catch(() => {});
-      }
-    };
-    const t = setInterval(scan, 15000);
-    return () => clearInterval(t);
-  }, [sessionInput, sendAction]);
 
   /* ── actions ── */
   const handleAcknowledge = useCallback(
@@ -384,48 +319,160 @@ export default function NurseViewPage() {
   const [trajectory, setTrajectory] = useState<ForecastResult | null>(null);
   const lastWarnBandRef = useRef(0);
 
+  /* ════════════════════════════════════════════════════════════════
+   * AUTOMATION ENGINE — one stable 5s tick for three subsystems:
+   *   1. ESCALATION RULES      (evaluateEscalations → auto-escalate)
+   *   2. ESCALATION CHAIN      (EMERGENCY unacked 60s → /api/notify)
+   *   3. TRAJECTORY FORECAST   (Holt projection → SYSTEM alert)
+   *
+   * All live values are read through refs so the interval survives the
+   * ~3s metrics pushes that previously reset these timers forever.
+   * ════════════════════════════════════════════════════════════════ */
+  const metricsLiveRef = useRef(primaryMetrics);
+  metricsLiveRef.current = primaryMetrics;
+  const vitalsLiveRef = useRef(primaryVitals);
+  vitalsLiveRef.current = primaryVitals;
+  const sessionLiveRef = useRef(sessionInput);
+  sessionLiveRef.current = sessionInput;
+  const sendActionLiveRef = useRef(sendAction);
+  sendActionLiveRef.current = sendAction;
+
   useEffect(() => {
     if (!paired) return;
-    const push = () => {
-      const v = primaryVitals;
-      const m = primaryMetrics;
-      if (!v && !m) return;
-      const arr = vitalSamplesRef.current;
-      if ((v?.heartRate != null || v?.spo2 != null || m?.alertnessScore != null)) {
-        arr.push({
-          t: Date.now(),
-          hr: v?.heartRate ?? undefined,
-          spo2: v?.spo2 ?? undefined,
-          alertness: m?.alertnessScore ?? undefined,
-          movement: m?.movementActivity ?? undefined,
+
+    const tick = () => {
+      const now = Date.now();
+      const snapshot = logRef.current;
+      const metrics = metricsLiveRef.current;
+      const session = sessionLiveRef.current;
+      if (!session) return;
+
+      /* ── 1) escalation rules ── */
+      const decisions = evaluateEscalations(snapshot, metrics, now);
+      if (decisions.length > 0) {
+        const byId = new Map(decisions.map((d) => [d.entryId, d]));
+
+        // pure state transition
+        setLog((prevLog) => {
+          let changed = false;
+          const next = prevLog.map((e) => {
+            const d = byId.get(e.id);
+            if (!d || e.escalated || e.resolved) return e;
+            changed = true;
+            return { ...e, escalated: true, escalatedBy: "system" as const, escalatedRule: d.rule, escalatedAt: now };
+          });
+          return changed ? next : prevLog;
         });
-        if (arr.length > 120) arr.splice(0, arr.length - 120);
+
+        // side effects outside the updater
+        for (const e of snapshot) {
+          const d = byId.get(e.id);
+          if (!d || e.escalated || e.resolved) continue;
+          sendActionLiveRef.current({
+            type: "escalate",
+            entryId: e.id,
+            timestamp: now,
+            actor: "CareSpeak Engine",
+            bySystem: true,
+          });
+          setAutoNotes((notes) =>
+            [`${new Date().toLocaleTimeString()} · Auto-escalated ${e.gesture} — ${d.reason}`, ...notes].slice(0, 6)
+          );
+        }
+      }
+
+      /* ── 2) closed-loop escalation chain ── */
+        for (const e of logRef.current) {
+          if (e.gesture !== "EMERGENCY" || e.resolved || e.acknowledged) continue;
+          if (now - e.timestamp < 60_000) continue;
+          if (chainNotifiedRef.current.has(e.id)) continue;
+          chainNotifiedRef.current.add(e.id);
+          // Evict the OLDEST ids individually — wholesale clear() made still-
+          // unacknowledged emergencies eligible for repeat SMS dispatch.
+          if (chainNotifiedRef.current.size > 200) {
+            const oldest = chainNotifiedRef.current.values().next().value;
+            if (oldest !== undefined) chainNotifiedRef.current.delete(oldest);
+          }
+
+          sendActionLiveRef.current({
+            type: "escalate",
+            entryId: e.id,
+            timestamp: now,
+            actor: "Escalation Chain",
+            bySystem: true,
+          });
+          setAutoNotes((notes) =>
+            [
+              `${new Date().toLocaleTimeString()} · ⛓ No ack in 60s — escalation chain fired (WhatsApp/SMS dispatch attempted)`,
+              ...notes,
+            ].slice(0, 6)
+          );
+          // Fire-and-forget dispatch; logs to server console when no provider keys are set.
+          void fetch("/api/notify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session,
+              patient: session,
+              gesture: e.gesture,
+              contacts: (() => {
+                try {
+                  return JSON.parse(localStorage.getItem("carespeak_contacts") ?? "[]") as string[];
+                } catch {
+                  return [] as string[];
+                }
+              })(),
+            }),
+          }).catch(() => {});
+        }
+
+      /* ── 3) trajectory forecast ── */
+      const v = vitalsLiveRef.current;
+      const arr = vitalSamplesRef.current;
+      // Only sample FRESH data: a wearable that stopped transmitting must not
+      // keep feeding its last reading into the Holt projection as if the
+      // patient were still stable.
+      const vitalsFresh = v?.receivedAt != null && now - v.receivedAt < 30_000;
+      const metricsFresh =
+        metrics?.lastSeen != null && now - new Date(metrics.lastSeen).getTime() < 30_000;
+      if ((vitalsFresh && (v?.heartRate != null || v?.spo2 != null)) || metricsFresh) {
+        arr.push({
+          t: now,
+          hr: vitalsFresh ? v?.heartRate ?? undefined : undefined,
+          spo2: vitalsFresh ? v?.spo2 ?? undefined : undefined,
+          alertness: metricsFresh ? metrics?.alertnessScore ?? undefined : undefined,
+          movement: metricsFresh ? metrics?.movementActivity ?? undefined : undefined,
+        });
+        if (arr.length > 360) arr.splice(0, arr.length - 360); // ~30 min at 5s cadence
+      }
+      if (arr.length >= 6) {
+        const f = forecastDeterioration(arr);
+        setTrajectory(f);
+        // auto-raise a SYSTEM alert only when severity increases
+        const rank = bandRank(f.band);
+        if (rank >= 2 && rank > lastWarnBandRef.current) {
+          lastWarnBandRef.current = rank;
+          const entry = addGestureLog(
+            "SYSTEM",
+            trajectoryAlertText(f),
+            0.9,
+            "system",
+            voiceAlert.getLanguage(),
+            { sessionId: session, source: "system" }
+          );
+          syncRef.current?.sendAlert(entry);
+        } else if (rank === 0) {
+          lastWarnBandRef.current = 0;
+        }
       }
     };
-    push();
-    const compute = setInterval(() => {
-      if (vitalSamplesRef.current.length < 6) return;
-      const f = forecastDeterioration(vitalSamplesRef.current);
-      setTrajectory(f);
-      // auto-raise a SYSTEM alert only when severity increases
-      const rank = bandRank(f.band);
-      if (rank >= 2 && rank > lastWarnBandRef.current) {
-        lastWarnBandRef.current = rank;
-        const entry = addGestureLog(
-          "SYSTEM",
-          trajectoryAlertText(f),
-          0.9,
-          "system",
-          voiceAlert.getLanguage(),
-          { sessionId: sessionInput, source: "demo" as const }
-        );
-        syncRef.current?.sendAlert(entry);
-      } else if (rank === 0) {
-        lastWarnBandRef.current = 0;
-      }
-    }, 5000);
-    return () => clearInterval(compute);
-  }, [paired, primaryVitals, primaryMetrics, sessionInput]);
+
+    tick();
+    const t = setInterval(tick, 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paired]);
+
 
   const statusColor =
     status === "connected" ? "bg-[#22a67e]" : status === "reconnecting" ? "bg-[#e8993e]" : "bg-[#d94a4a]";
@@ -533,6 +580,16 @@ export default function NurseViewPage() {
                 setLog([]);
                 setAutoNotes([]);
                 setSessionInput("");
+                // Full automation-state reset: without this, the next patient's
+                // Holt forecast ran over the PREVIOUS patient's samples and
+                // chain/seen-id memory leaked across sessions.
+                vitalSamplesRef.current = [];
+                lastWarnBandRef.current = 0;
+                chainNotifiedRef.current.clear();
+                seenCompanionIds.current.clear();
+                setPatientMsgs([]);
+                setUnseenMsgs(0);
+                setTrajectory(null);
               }}
               className="ml-1 px-2 py-0.5 rounded-lg bg-white/70 hover:bg-white text-[#6e6e6e] hover:text-[#c63a22] border border-[#ececec] transition-all"
               title="Pair with a different session"

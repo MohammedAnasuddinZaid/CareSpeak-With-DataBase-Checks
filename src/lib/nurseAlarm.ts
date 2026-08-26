@@ -60,21 +60,23 @@ export function startAlarm(): void {
 export function stopAlarm(): void {
   if (toggle) clearInterval(toggle);
   toggle = null;
-  if (gain && ctx) {
-    try {
-      gain.gain.setTargetAtTime(0, ctx.currentTime, 0.05);
-    } catch {}
-  }
+  const fadingGain = gain;
   const o = osc;
   const c = ctx;
   osc = null;
+  gain = null;
+  if (fadingGain && c) {
+    try {
+      fadingGain.gain.setTargetAtTime(0, c.currentTime, 0.05);
+    } catch {}
+  }
   setTimeout(() => {
     try {
       o?.stop();
       o?.disconnect();
-      if (c && c.state === "running" && !osc) {
-        /* keep context alive for reuse */
-      }
+      // Disconnect the gain too — each start/stop cycle used to leave one live
+      // GainNode attached to the audio graph for the page's lifetime.
+      fadingGain?.disconnect();
     } catch {}
   }, 200);
 }
