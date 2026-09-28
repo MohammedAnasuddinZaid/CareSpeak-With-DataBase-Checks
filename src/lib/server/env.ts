@@ -85,18 +85,32 @@ export const env = {
    * Passing the provider's CA makes the certificate genuinely verified rather
    * than blindly trusted via `rejectUnauthorized: false`.
    *
-   * Accepts the PEM with real line breaks, or written on one line with literal
-   * `\n` escapes, because a single-line value is far easier to paste into a
-   * host's environment-variable editor than a block containing newlines.
+   * Tolerates every shape an operator can realistically paste into a host's
+   * environment-variable editor: a real multi-line PEM, one line with literal
+   * `\n` escapes, a fully collapsed single line, or a block with stray spaces
+   * and CRLF endings. All of them normalise to the same canonical PEM, so a
+   * formatting mistake cannot silently degrade the handshake into
+   * HANDSHAKE_SSL_ERROR.
    */
   get databaseCa(): string | undefined {
     const raw = optional("DATABASE_CA");
     if (!raw) return undefined;
-    // A real multi-line PEM already contains LF characters. A single-line value
-    // instead carries the two-character sequence backslash-n, which Node's TLS
-    // stack cannot parse -- unwrap it into real newlines in that case.
-    const pem = raw.includes("\n") ? raw : raw.replace(/\\n/g, "\n");
-    return pem.trim();
+    // Already canonical: real newlines and an END line. Nothing to rewrite.
+    if (raw.includes("\n-----END CERTIFICATE-----")) return raw.trim();
+
+    // Otherwise reassemble from the base64 body alone. Strip the armour, then
+    // every character that cannot appear in base64: whitespace, CRLF remnants,
+    // and literal backslash escapes alike. Each escape is removed as a whole
+    // backslash-letter pair -- deleting the backslash alone would leave the
+    // literal `n` of a `\n` in the body and corrupt the certificate.
+    const body = raw
+      .replace(/-----(?:BEGIN|END) CERTIFICATE-----/g, "")
+      .replace(/\\[a-zA-Z]/g, "")
+      .replace(/\s/g, "");
+    if (!body) return undefined;
+
+    const lines = body.match(/.{1,64}/g) ?? [];
+    return `-----BEGIN CERTIFICATE-----\n${lines.join("\n")}\n-----END CERTIFICATE-----`;
   },
   get redisUrl(): string | undefined {
     return optional("REDIS_URL");
