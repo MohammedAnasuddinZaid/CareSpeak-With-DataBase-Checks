@@ -52,9 +52,66 @@ export interface MailResult {
   messageId?: string;
 }
 
-/** True when an App Password is configured, so the UI can hide the OTP option. */
+/**
+ * Which transport this deployment can actually use.
+ *
+ * `smtp` is fine from a laptop and wrong from Vercel: Gmail rejects sign-in
+ * from datacenter IP ranges, so an OTP configured over Gmail silently stops
+ * arriving the moment it is deployed. `resend` is plain HTTPS and works from
+ * serverless, which is why it is preferred when a key is present.
+ */
+export type MailProvider = "resend" | "smtp" | "none";
+
+export function mailProvider(): MailProvider {
+  if (env.resendApiKey) return "resend";
+  if (env.smtp.user && env.smtp.pass) return "smtp";
+  return "none";
+}
+
+/** True when a usable transport is configured, so the UI can offer the OTP option. */
 export function mailConfigured(): boolean {
-  return Boolean(env.smtp.user && env.smtp.pass);
+  return mailProvider() !== "none";
+}
+
+/**
+ * Send via the Resend HTTP API.
+ *
+ * Deliberately not SMTP: Resend's SMTP endpoint needs a long-lived connection
+ * that serverless functions do not have, and the REST API needs nothing but
+ * `fetch`, which is built in.
+ */
+async function sendViaResend(
+  apiKey: string,
+  from: string,
+  to: string,
+  subject: string,
+  text: string,
+  html: string,
+): Promise<MailResult> {
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from, to: [to], subject, text, html }),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      const message = `Resend ${res.status}: ${detail.slice(0, 300)}`;
+      console.error("[mail] Resend delivery failed:", message);
+      return { delivered: false, reason: message };
+    }
+
+    const data = (await res.json()) as { id?: string };
+    return { delivered: true, messageId: data.id };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[mail] Resend request failed:", message);
+    return { delivered: false, reason: message };
+  }
 }
 
 const OTP_SUBJECT: Record<string, string> = {
@@ -107,9 +164,26 @@ export async function sendOtpEmail(
   </body>
 </html>`;
 
+  // Resend first when configured: it is the only transport that survives being
+  // deployed, so an SMTP config left over from local dev must not take priority.
+  if (env.resendApiKey) {
+    return sendViaResend(
+      env.resendApiKey,
+      `CareSpeak <${env.smtp.from}>`,
+      to,
+      subject,
+      text,
+      html,
+    );
+  }
+
   const tx = transporter();
   if (!tx) {
-    return { delivered: false, reason: "SMTP is not configured (SMTP_USER / SMTP_APP_PASSWORD)" };
+    return {
+      delivered: false,
+      reason:
+        "No mail transport configured: set RESEND_API_KEY (recommended, works on Vercel) or SMTP_USER + SMTP_APP_PASSWORD (local only).",
+    };
   }
 
   try {

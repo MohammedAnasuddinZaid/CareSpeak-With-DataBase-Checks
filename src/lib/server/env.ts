@@ -142,6 +142,14 @@ export const env = {
   get googleClientId(): string | undefined {
     return optional("GOOGLE_CLIENT_ID");
   },
+  /**
+   * Resend HTTP API key. Preferred over SMTP when present: Gmail refuses SMTP
+   * sign-in from datacenter IPs, so an OTP that works locally stops arriving
+   * once deployed. A verified Resend domain is required for the From address.
+   */
+  get resendApiKey(): string | undefined {
+    return optional("RESEND_API_KEY");
+  },
   get googleClientSecret(): string | undefined {
     return optional("GOOGLE_CLIENT_SECRET");
   },
@@ -229,8 +237,24 @@ export function auditConfiguration(): {
     warnings.push("GOOGLE_CLIENT_ID is not set: Google Sign-In is disabled.");
   }
 
-  if (!env.smtp.pass) {
-    warnings.push("SMTP_APP_PASSWORD is not set: email OTP will not be delivered.");
+  const remoteOrigin = !/^https?:\/\/(localhost|127\.0\.0\.1)/.test(env.appOrigin);
+
+  if (env.resendApiKey) {
+    // Resend only accepts mail from a domain you have verified with them.
+    if (env.smtp.from && /@gmail\.com|@yahoo\.com|@hotmail\.com|@outlook\.com/i.test(env.smtp.from)) {
+      warnings.push(
+        "RESEND_API_KEY is set but MAIL_FROM is a free-mail address: Resend will reject it. Set MAIL_FROM to a verified domain, e.g. no-reply@yourdomain.com.",
+      );
+    }
+  } else if (!env.smtp.pass) {
+    warnings.push(
+      "No mail transport configured: email OTP will not be delivered. Set RESEND_API_KEY for a deployed instance.",
+    );
+  } else if (remoteOrigin) {
+    // The failure that produced "delivery: unavailable" in production.
+    warnings.push(
+      "Deployed without RESEND_API_KEY, so email OTP relies on Gmail SMTP, which refuses sign-in from datacenter IPs. Expect OTPs to fail on this deployment.",
+    );
   }
 
   const remote = !/^https?:\/\/(localhost|127\.0\.0\.1)/.test(env.appOrigin);
