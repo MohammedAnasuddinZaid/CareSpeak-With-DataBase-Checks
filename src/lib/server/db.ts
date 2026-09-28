@@ -39,7 +39,13 @@ function buildPool(): Pool {
     bigNumberStrings: false,
     decimalNumbers: true,
     namedPlaceholders: false,
-    ssl: env.databaseSsl ? {} : undefined,
+    // A managed provider's TLS chain often ends in a private root that Node does
+    // not trust, so `ssl: {}` alone dies with HANDSHAKE_SSL_ERROR ("self-signed
+    // certificate in certificate chain") on an otherwise reachable server. When
+    // DATABASE_CA is set the certificate is verified against the provider's root;
+    // without it the handshake still attempts, and an unverifiable chain is
+    // refused rather than silently downgraded.
+    ssl: env.databaseSsl ? (env.databaseCa ? { ca: env.databaseCa } : {}) : undefined,
   };
   const pool = mysql.createPool(options);
 

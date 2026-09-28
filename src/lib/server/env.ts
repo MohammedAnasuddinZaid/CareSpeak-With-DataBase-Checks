@@ -74,6 +74,30 @@ export const env = {
   get databaseSsl(): boolean {
     return bool("DATABASE_SSL", false);
   },
+  /**
+   * PEM-encoded CA certificate used to verify the database server's TLS
+   * certificate.
+   *
+   * Managed MySQL providers (Aiven and others) terminate the chain in a private
+   * root that is not in Node's trust store, so a bare `ssl: {}` fails the
+   * handshake with HANDSHAKE_SSL_ERROR -- "self-signed certificate in
+   * certificate chain" -- even though the connection is otherwise reachable.
+   * Passing the provider's CA makes the certificate genuinely verified rather
+   * than blindly trusted via `rejectUnauthorized: false`.
+   *
+   * Accepts the PEM with real line breaks, or written on one line with literal
+   * `\n` escapes, because a single-line value is far easier to paste into a
+   * host's environment-variable editor than a block containing newlines.
+   */
+  get databaseCa(): string | undefined {
+    const raw = optional("DATABASE_CA");
+    if (!raw) return undefined;
+    // A real multi-line PEM already contains LF characters. A single-line value
+    // instead carries the two-character sequence backslash-n, which Node's TLS
+    // stack cannot parse -- unwrap it into real newlines in that case.
+    const pem = raw.includes("\n") ? raw : raw.replace(/\\n/g, "\n");
+    return pem.trim();
+  },
   get redisUrl(): string | undefined {
     return optional("REDIS_URL");
   },
