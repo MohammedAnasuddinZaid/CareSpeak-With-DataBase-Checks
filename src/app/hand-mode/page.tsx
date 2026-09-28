@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Hand, RotateCcw, Camera, StopCircle, Pause, ThumbsUp, ThumbsDown,
+  RotateCcw, Camera, StopCircle, Pause, ThumbsUp, ThumbsDown,
   HelpCircle, Droplets, Sparkles, Activity, Fingerprint, Volume2,
 } from "lucide-react";
 import { useHandGesture } from "@/hooks/useHandGesture";
@@ -16,8 +16,11 @@ import { addGestureLog } from "@/lib/gestureLog";
 import QRPairingDisplay from "@/components/QRPairingDisplay";
 import CompanionMessageInput from "@/components/CompanionMessageInput";
 import DemoModeControls from "@/components/DemoModeControls";
+import ModeSwitcher from "@/components/ModeSwitcher";
+import MyHistoryPanel from "@/components/MyHistoryPanel";
 import PatientMetricsCard from "@/components/PatientMetricsCard";
 import NurseReplyBanner from "@/components/NurseReplyBanner";
+import { linkStatusLabel } from "@/lib/networkSync";
 
 const GESTURE_GUIDE = [
   { label: "YES", desc: "Thumbs Up", icon: ThumbsUp },
@@ -89,12 +92,12 @@ export default function HandModePage() {
     <div className="min-h-screen pt-20 pb-16">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
+          {/* The input-method toggle sits here, above the heading, because it is a
+              property of this workspace rather than a destination. It replaced two
+              slots in the global site bar. */}
+          <ModeSwitcher className="mb-5" />
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div>
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#c63a22]/5 border border-[#c63a22]/15 text-[#c63a22] text-sm font-medium mb-4">
-                <Hand className="w-4 h-4" />
-                Hand Gesture Mode
-              </div>
               <h1 className="text-3xl sm:text-4xl font-bold text-[#1f1f1f] tracking-tight">Gesture Dashboard</h1>
               <p className="mt-2 text-[#6e6e6e]">
                 Make a gesture to speak. Hold an open palm wide for 5s to pause or resume.
@@ -169,7 +172,7 @@ export default function HandModePage() {
               )}
               {cameraOn && (
                 <div className={`absolute top-4 right-4 px-3 py-1.5 rounded-xl text-xs font-medium shadow-sm ${status === "connected" ? "bg-[#ecfdf5]/95 text-[#22a67e]" : "bg-white/90 text-[#9ca3af]"}`}>
-                  {status === "connected" ? `Nurse link · ${transport.toUpperCase()}` : "Nurse link offline"}
+                  {linkStatusLabel(status, transport)}
                 </div>
               )}
             </div>
@@ -213,6 +216,8 @@ export default function HandModePage() {
               )}
             </AnimatePresence>
 
+            <MyHistoryPanel />
+
             <div className="card p-6">
               <h3 className="text-sm font-bold text-[#1f1f1f] mb-4 flex items-center gap-2">
                 <Activity className="w-4 h-4 text-[#c63a22]" /> Gesture Guide
@@ -224,7 +229,7 @@ export default function HandModePage() {
                   const isPauseItem = g.pause;
                   return (
                     <div key={g.label}
-                      className={`flex items-center justify-between p-2.5 rounded-xl transition-all duration-200 ${
+                      className={`flex items-center justify-between p-2.5 rounded-xl transition-colors duration-200 ${
                         isPauseItem
                           ? isPaused ? "bg-[#fffbeb] border border-[#fde68a]" : "hover:bg-[#f5f3f0] border border-transparent"
                           : isActive ? "bg-[#c63a22]/5 border border-[#c63a22]/15" : "hover:bg-[#f5f3f0] border border-transparent"
@@ -244,7 +249,7 @@ export default function HandModePage() {
 
             <button onClick={() => gesture && voiceAlert.speak(gesture, "hand")} disabled={!gesture}
               aria-label="Replay last alert"
-              className={`w-full py-3.5 rounded-2xl transition-all duration-200 text-sm font-medium flex items-center justify-center gap-2 ${
+              className={`w-full py-3.5 rounded-2xl transition-[color,background-color,border-color,box-shadow,transform] duration-200 text-sm font-medium flex items-center justify-center gap-2 ${
                 gesture ? "card hover:bg-[#f5f3f0] text-[#1f1f1f]" : "bg-[#f5f3f0] text-[#6e6e6e] border border-[#ececec] cursor-not-allowed"
               }`}>
               <RotateCcw className="w-4 h-4" /> Replay Last Alert <Volume2 className="w-4 h-4 opacity-50" />

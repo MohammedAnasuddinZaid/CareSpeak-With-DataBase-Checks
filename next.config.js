@@ -1,7 +1,17 @@
 /** @type {import('next').NextConfig} */
+
+// "Collecting page data" forks one worker per CPU, and each worker needs a few
+// hundred MB. On a memory-constrained host that exhausts the commit limit and
+// the build dies partway through with an unhelpful OOM. Opt in with
+// NEXT_BUILD_CPUS=1 there; left unset, normal parallel builds are unaffected.
+const constrainedBuild = process.env.NEXT_BUILD_CPUS
+  ? { experimental: { cpus: Number(process.env.NEXT_BUILD_CPUS), workerThreads: false } }
+  : {};
+
 const nextConfig = {
   reactStrictMode: true,
   images: { unoptimized: true },
+  ...constrainedBuild,
   async headers() {
     return [
       {

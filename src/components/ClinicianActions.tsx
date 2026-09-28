@@ -100,7 +100,7 @@ export default function ClinicianActions({ entries, onAcknowledge, onEscalate, o
                   {!entry.acknowledged && (
                     <button
                       onClick={() => onAcknowledge(entry.id)}
-                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[#ecfdf5] hover:bg-[#d1fae5] text-[#22a67e] text-xs font-medium transition-all"
+                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[#ecfdf5] hover:bg-[#d1fae5] text-[#22a67e] text-xs font-medium transition-colors"
                     >
                       <CheckCircle className="w-3 h-3" />
                       Acknowledge
@@ -109,7 +109,7 @@ export default function ClinicianActions({ entries, onAcknowledge, onEscalate, o
                   {entry.acknowledged && !entry.escalated && (
                     <button
                       onClick={() => onEscalate(entry.id)}
-                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[#fef2f2] hover:bg-[#fee2e2] text-[#d94a4a] text-xs font-medium transition-all"
+                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[#fef2f2] hover:bg-[#fee2e2] text-[#d94a4a] text-xs font-medium transition-colors"
                     >
                       <ArrowUpCircle className="w-3 h-3" />
                       Escalate
@@ -118,7 +118,7 @@ export default function ClinicianActions({ entries, onAcknowledge, onEscalate, o
                   {(entry.acknowledged || entry.escalated) && (
                     <button
                       onClick={() => onResolve(entry.id)}
-                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[#ecfdf5] hover:bg-[#d1fae5] text-[#22a67e] text-xs font-medium transition-all"
+                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[#ecfdf5] hover:bg-[#d1fae5] text-[#22a67e] text-xs font-medium transition-colors"
                     >
                       <CheckCircle className="w-3 h-3" />
                       Resolve
@@ -134,7 +134,7 @@ export default function ClinicianActions({ entries, onAcknowledge, onEscalate, o
       {entries.length > 5 && (
         <button
           onClick={() => setExpanded(!expanded)}
-          className="w-full mt-3 flex items-center justify-center gap-1 py-2 rounded-xl text-xs text-[#6e6e6e] hover:text-[#1f1f1f] transition-all"
+          className="w-full mt-3 flex items-center justify-center gap-1 py-2 rounded-xl text-xs text-[#6e6e6e] hover:text-[#1f1f1f] transition-colors"
         >
           <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} />
           {expanded ? "Show less" : `Show all (${entries.length})`}

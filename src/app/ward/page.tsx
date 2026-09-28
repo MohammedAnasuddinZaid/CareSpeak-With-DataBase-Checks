@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { BedDouble, RefreshCw, Activity, ArrowUpRight, HeartPulse, Search, Siren, Smartphone } from "lucide-react";
+import { BedDouble, RefreshCw, Activity, ArrowRight, ArrowUpRight, HeartPulse, Search, ShieldAlert, Siren, Smartphone } from "lucide-react";
 import { formatRelativeTime } from "@/components/uiConstants";
 import { playAlertSound } from "@/lib/alertSounds";
 import { isAlarmMuted } from "@/lib/nurseAlarm";
@@ -52,12 +52,27 @@ export default function WardPage() {
   const [now, setNow] = useState(Date.now());
   const [bandFilter, setBandFilter] = useState<"all" | Band>("all");
   const [query, setQuery] = useState("");
+  const [denied, setDenied] = useState<null | "unauthenticated" | "forbidden">(null);
   const originalTitle = useRef(typeof document !== "undefined" ? document.title : "CareSpeak");
 
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/ward", { cache: "no-store" });
+      if (res.status === 401) {
+        // Ward data is staff-only. Showing an empty board here would read as
+        // "no patients admitted", which is the one conclusion a nurse must
+        // never draw from a failed request.
+        setDenied("unauthenticated");
+        setRows([]);
+        return;
+      }
+      if (res.status === 403) {
+        setDenied("forbidden");
+        setRows([]);
+        return;
+      }
       if (res.ok) {
+        setDenied(null);
         const data = (await res.json()) as { sessions?: WardRow[] };
         setRows(data.sessions ?? []);
       }
@@ -138,6 +153,24 @@ export default function WardPage() {
         </motion.div>
 
         {/* summary strip doubles as band filters */}
+        {denied ? (
+          <div className="card p-8 text-center border border-[#e8993e]/40 bg-[#fffbeb]">
+            <ShieldAlert className="w-8 h-8 mx-auto mb-3 text-[#c77a1f]" />
+            <h2 className="text-lg font-semibold text-[#1f1f1f] mb-1">
+              {denied === "unauthenticated" ? "Sign in to view the ward" : "Your role cannot view the ward"}
+            </h2>
+            <p className="text-sm text-[#6e6e6e] max-w-md mx-auto mb-5">
+              Ward status is patient health information, so it is limited to clinical accounts.
+              Nothing is hidden because the ward is empty — this board did not load.
+            </p>
+            {denied === "unauthenticated" && (
+              <a href="/login?next=%2Fward" className="btn-primary px-5 py-2.5 text-sm inline-flex items-center gap-2">
+                Sign in <ArrowRight className="w-4 h-4" />
+              </a>
+            )}
+          </div>
+        ) : (
+          <>
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
           {(
             [
@@ -152,7 +185,7 @@ export default function WardPage() {
               key={band}
               onClick={() => setBandFilter(band)}
               aria-pressed={bandFilter === band}
-              className={`card p-4 border text-left transition-all ${ring || "border-transparent"} ${
+              className={`card p-4 border text-left ${ring || "border-transparent"} ${
                 bandFilter === band
                   ? "ring-2 ring-[#c63a22]/40"
                   : "hover:border-[#d5d5d5]"
@@ -200,7 +233,7 @@ export default function WardPage() {
                   href={`/nurse-view?session=${r.session}`}
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className={`rounded-3xl border ${st.ring} p-5 block transition-all hover:shadow-lg hover:-translate-y-0.5`}
+                  className={`rounded-3xl border ${st.ring} p-5 block transition-[box-shadow,transform] hover:shadow-lg hover:-translate-y-0.5`}
                 >
                   <div className="flex items-center justify-between mb-3 gap-2">
                     <span className="text-lg font-black tracking-[0.18em] text-[#1f1f1f] font-mono">{r.session}</span>
@@ -263,6 +296,8 @@ export default function WardPage() {
               );
             })}
           </div>
+        )}
+          </>
         )}
       </div>
     </div>

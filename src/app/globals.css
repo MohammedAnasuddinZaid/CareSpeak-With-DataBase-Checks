@@ -22,7 +22,36 @@
   --color-warning: #e8993e;
   --color-danger: #d94a4a;
 
+  /* Semantic ink + line ramp.
+     Everything new (nav, auth) is built from these instead of ad-hoc hexes, so
+     a single edit here re-tunes the whole surface. The values are the same
+     ones already hard-coded across the older pages. */
+  --color-ink: #1f1f1f;
+  --color-ink-2: #6e6e6e;
+  --color-ink-3: #9a9a9a;
+  --color-line: #e6e3df;
+  --color-line-soft: #f1efeb;
+  --color-line-strong: #d6d2cc;
+  --color-shell: #f7f5f2;
+  --color-stage: #0b0d12;
+
+  /* Dark-stage ramp, for the sign-in / register brand panel. */
+  --color-stage-ink: #f4f2ef;
+  --color-stage-ink-2: rgba(244, 242, 239, 0.68);
+  --color-stage-ink-3: rgba(244, 242, 239, 0.44);
+
   --font-family-sans: "Inter", "system-ui", "-apple-system", "sans-serif";
+  --font-family-display: "Raleway", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Motion. Two curves only, used everywhere, so timing feels consistent:
+     `--ease-out` for anything the user triggered, `--ease-spring` for the
+     sliding nav indicator. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+
+  --shadow-nav: 0 1px 2px rgba(16, 15, 14, 0.04), 0 8px 24px -12px rgba(16, 15, 14, 0.14);
+  --shadow-pop: 0 12px 40px -12px rgba(16, 15, 14, 0.22), 0 2px 8px -2px rgba(16, 15, 14, 0.08);
+  --shadow-card: 0 32px 80px -24px rgba(8, 10, 16, 0.55), 0 4px 16px -6px rgba(8, 10, 16, 0.3);
 
   --animate-fade-in: fadeIn 0.5s ease-out;
   --animate-slide-up: slideUp 0.6s ease-out;
@@ -34,6 +63,48 @@
   --animate-drift: drift 12s ease-in-out infinite;
   --animate-glow: glow 3s ease-in-out infinite;
   --animate-spin-slow: spinSlow 20s linear infinite;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Registered custom properties.
+
+   A plain `--x: 0` in a custom property is an untyped token: the browser cannot
+   interpolate it, so animating it falls back to a discrete jump at 50%. Wrapping
+   it in `@property` with a syntax + inherits + initial-value makes it a real
+   animatable value, which is what lets the aurora mesh rotate and the nav
+   indicator slide on the compositor instead of repainting every frame.
+   ──────────────────────────────────────────────────────────────────────────── */
+@property --cs-spin {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@property --cs-hue {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@property --cs-push {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --cs-progress {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+/* The pinwheel's open distance. Registered as a typed length so the wedge
+   distance is a single knob the open state can flip, rather than four copies of
+   a literal baked into four transform rules. */
+@property --cs-open {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
 }
 
 @keyframes fadeIn {
@@ -102,9 +173,45 @@
   to { transform: rotate(360deg); }
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   SCROLLING
+
+   Smooth scrolling is four separate mechanisms, and only the first one is the
+   `scroll-behavior` line everybody already had. The other three are what
+   separate "it animates" from "it is buttery".
+
+   1. `scroll-behavior` — anchors and programmatic `scrollIntoView` ease instead
+      of jumping. Already present; kept.
+   2. `scroll-padding-top` — the fixed bar is 4rem, and without this an
+      in-page anchor scrolls its target *underneath* the bar. 5rem clears the
+      bar plus its shadow. Already present; kept.
+   3. `overscroll-behavior` — the interesting one. By default, reaching the top
+      of the page hands the leftover scroll gesture to the browser, which fires
+      the pull-to-refresh gesture and, on a ward tablet held in two hands, fires
+      the browser's own back-navigation swipe. A patient swiping up through the
+      page can be thrown out of the app by accident. `none` on the x axis closes
+      the horizontal history-swipe entirely; on the y axis it is left alone,
+      because vertical pull-to-refresh is a behaviour users expect and the
+      overscroll at the *top* is the only place it should be possible.
+   4. `text-size-adjust` and the font-smoothing pair already below — a 100%
+      zoom or a rotated tablet re-flows text, and without `text-size-adjust` the
+      whole layout re-scales mid-scroll, which is the one thing that reliably
+      makes scrolling feel like the page is being dragged rather than moved.
+
+   The two `-webkit` properties after them are for iOS specifically: momentum
+   scrolling is off by default in a non-scrolling body, which turns a fling
+   gesture into a stepped crawl. This is the difference between "scrolls" and
+   "scrolls like the rest of the phone".
+   ════════════════════════════════════════════════════════════════════════════ */
 html {
   scroll-behavior: smooth;
   scroll-padding-top: 5rem;
+  /* No sideways history swipe. The app is entirely vertical, so horizontal
+     overscroll has exactly one meaning — the user is trying to go back — and
+     in a patient-facing kiosk the app they are in is always the right answer. */
+  overscroll-behavior-x: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -113,6 +220,19 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background: #f9f7f5;
   color: #1f1f1f;
+  /* Momentum scrolling on iOS. Without this a fast fling is delivered as a
+     series of discrete jumps instead of one continuous glide. */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Respect the OS setting rather than fighting it: a user who has asked for
+   reduced motion gets instant jumps, not a gentler animation. This sits at the
+   very bottom of the cascade on purpose so it overrides the `scroll-behavior`
+   above rather than being overridden by it. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
 }
 
 ::selection {
@@ -120,12 +240,16 @@ body {
   color: #1f1f1f;
 }
 
-/* ── Navigation ── */
+/* ── Navigation ──
+   Legacy transparent/solid pair, superseded by the `data-solid` attribute on
+   `.nav-shell` in the NAVIGATION section below. Nothing references these two
+   names any more, but they are cheap and a stylesheet this size is a bad place
+   to prune on a hunch — so the transition is at least named rather than `all`. */
 .nav-transparent {
   background: transparent;
   backdrop-filter: none;
   border-bottom: 1px solid transparent;
-  transition: all 0.3s ease;
+  transition: background-color 0.3s var(--ease-out), border-color 0.3s var(--ease-out);
 }
 
 .nav-solid {
@@ -133,7 +257,7 @@ body {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid #ececec;
-  transition: all 0.3s ease;
+  transition: background-color 0.3s var(--ease-out), border-color 0.3s var(--ease-out);
 }
 
 /* ── Hero ── */
@@ -150,52 +274,88 @@ body {
   background: linear-gradient(to top, #0f172a 0%, transparent 50%);
 }
 
-/* ── Cards ── */
-.card {
+/* ── Cards ──
+   `transition: all` is the reason these felt unsmooth. It asks the browser to
+   watch every animatable property on the element — including the ones the
+   layout engine owns — so a hover re-evaluates far more than it needs to, and
+   `ease` finishes on a curve that reads as a stop rather than a settle.
+
+   Three changes, none of them visible in a still:
+
+     1. The transitioned properties are named. Only `transform`, `box-shadow` and
+        `border-color` move, and two of those three are paint-only, so the whole
+        hover stays off the layout path.
+     2. The duration is longer (0.32s) on the project's own easing curve. A
+        0.2s lift is over before the eye has registered it as movement; 0.32s on
+        a decelerating curve is long enough to read as the card rising.
+     3. The card has a resting shadow. Without one, the hover has to invent a
+        whole new depth state, which is why the lift felt like the card flickering
+        rather than lifting.
+
+   `.card-interactive` is for cards that are really links or buttons. A card that
+   lifts on hover but is not focusable is a card that only works with a mouse —
+   so the same lift is bound to `:focus-visible`, and the whole surface is the
+   hit target. */
+.card,
+.dashboard-card {
+  --card-lift: -2px;
+  --card-shadow: 0 1px 2px rgba(16, 15, 14, 0.04);
+  --card-shadow-hover: 0 10px 28px -12px rgba(16, 15, 14, 0.22);
+  position: relative;
   background: #ffffff;
   border: 1px solid #ececec;
   border-radius: 1.25rem;
-  transition: all 0.2s ease;
+  box-shadow: var(--card-shadow);
+  transition: transform 0.32s var(--ease-out), box-shadow 0.32s var(--ease-out),
+    border-color 0.32s var(--ease-out);
 }
 
-.card:hover {
+.card:hover,
+.dashboard-card:hover,
+.card-interactive:focus-visible {
   border-color: #ddd;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
-  transform: translateY(-2px);
+  box-shadow: var(--card-shadow), var(--card-shadow-hover);
+  transform: translateY(var(--card-lift));
+}
+
+.card-interactive:focus-visible {
+  outline: 2px solid #c63a22;
+  outline-offset: 2px;
 }
 
 .card-flat {
   background: #ffffff;
   border: 1px solid #ececec;
   border-radius: 1.25rem;
+  box-shadow: var(--card-shadow);
 }
 
 .card-soft {
   background: #f5f3f0;
   border: 1px solid #ececec;
   border-radius: 1.25rem;
+  box-shadow: var(--card-shadow);
 }
 
-/* ── Dashboard cards ── */
-.dashboard-card {
-  background: #ffffff;
-  border: 1px solid #ececec;
-  border-radius: 1.25rem;
-  transition: all 0.2s ease;
-}
+/* ── Buttons ──
+   Same treatment as the cards: name the transitioned properties instead of
+   `all`, and give the press a little more room. A button is the thing a finger
+   lands on, so the 0.2s default was finishing the lift before the finger had
+   finished arriving — which is exactly the "unresponsive" feel. `transform`,
+   `box-shadow`, `background-color` and `border-color` are all the states that
+   actually change, and `background-color` and `box-shadow` are paint-only, so
+   the press never touches layout.
 
-.dashboard-card:hover {
-  border-color: #d5d5d5;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
-}
-
-/* ── Buttons ── */
+   The `:active` rules drop the lift back to zero rather than overshooting,
+   because a button that rebounds looks springy and a button that presses should
+   look pressed. */
 .btn-primary {
   background: #c63a22;
   color: white;
   border-radius: 0.75rem;
   font-weight: 600;
-  transition: all 0.2s ease;
+  transition: transform 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out),
+    background-color 0.18s var(--ease-out);
 }
 
 .btn-primary:hover {
@@ -214,7 +374,8 @@ body {
   border: 1px solid #ececec;
   border-radius: 0.75rem;
   font-weight: 500;
-  transition: all 0.2s ease;
+  transition: transform 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out),
+    background-color 0.18s var(--ease-out), border-color 0.18s var(--ease-out);
 }
 
 .btn-secondary:hover {
@@ -230,7 +391,8 @@ body {
   border: 1px solid #fecaca;
   border-radius: 0.75rem;
   font-weight: 500;
-  transition: all 0.2s ease;
+  transition: transform 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out),
+    background-color 0.18s var(--ease-out), border-color 0.18s var(--ease-out);
 }
 
 .btn-danger:hover {
@@ -263,7 +425,11 @@ body {
   border: 1px solid #e5e5e5;
 }
 
-/* ── Form inputs ── */
+/* ── Form inputs ──
+   `transition: all` on a text input is the most expensive one in the sheet: the
+   element is re-checked on every keystroke, and `all` includes the properties
+   the layout engine owns. Only `border-color` and `box-shadow` are named, so
+   typing stays on the compositor's fast path. */
 .input {
   background: white;
   border: 1px solid #ececec;
@@ -271,7 +437,7 @@ body {
   padding: 0.625rem 1rem;
   font-size: 0.875rem;
   color: #1f1f1f;
-  transition: all 0.2s ease;
+  transition: border-color 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out);
   outline: none;
 }
 
@@ -388,3 +554,2546 @@ body {
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   NAVIGATION
+
+   The bar is three zones and only three zones, and each answers one question:
+
+     LEFT   — where am I?        The waymark, alone.
+     CENTRE — where can I go?     Nurse, Ward, Logs. The only three things
+                                   allowed a permanent slot, centred in
+                                   whatever space the outer zones leave.
+     RIGHT  — what can I do?      Search, More, language, account, then
+                                   Emergency past a hairline.
+
+   This is a deliberate change from the previous structure, which tried to answer
+   a crowded bar by rendering it twice: a full text rail on wide screens and an
+   icon rail from `lg` up, with the hamburger parked at the end of the icon rail
+   the whole time. That produced the two states that read as broken — a
+   1024–1400px band where eight destinations collapsed into icon pills right
+   beside the waymark, and a desktop row where navigation, search, language,
+   account, Emergency and a hamburger all sat at one visual weight.
+
+   Three rules keep it from happening again:
+
+     1. **Nothing is sized for a state it is not in.** Search is a square icon;
+        the field appears only in the overlay, where it has the screen to itself.
+     2. **Two kinds of control never share a zone.** Navigation is text links in
+        the centre; everything you can *do* is in the right cluster, past a
+        seam. An icon rail destroys exactly that distinction, which is why there
+        is no icon rail.
+     3. **The hamburger is an alternative, not a companion.** It replaces the
+        centre zone wholesale below 1024px rather than sitting beside it.
+
+   The bar is a fixed, full-bleed element; `.nav-inner` is the only thing that
+   carries the max-width, so the hairline and the blur always run the full width
+   of the window while the contents stay on the page grid.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+
+.nav-shell {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 50;
+  transition: background-color 0.3s var(--ease-out), border-color 0.3s var(--ease-out),
+    box-shadow 0.3s var(--ease-out);
+  border-bottom: 1px solid transparent;
+  /* Own compositing layer.
+
+     The bar is fixed and it repaints on scroll, because its background and
+     shadow change once the hero is behind us. Without its own layer that repaint
+     is folded into the page's, so every scroll frame re-rasterises the bar's
+     `backdrop-filter` *and* the content passing underneath it. Promoting it
+     means the content scrolls in its own layer and the bar re-composites
+     independently — the blur stops being re-evaluated per frame, which is the
+     single largest source of scroll jank on a mid-range tablet. */
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+}
+
+.nav-shell[data-solid="false"] {
+  background: transparent;
+}
+
+.nav-shell[data-solid="true"] {
+  background: rgba(255, 255, 255, 0.86);
+  border-bottom-color: color-mix(in oklab, var(--color-line) 88%, transparent);
+  box-shadow: 0 1px 2px rgba(16, 15, 14, 0.04), 0 10px 28px -18px rgba(16, 15, 14, 0.2);
+  backdrop-filter: blur(18px) saturate(1.6);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+}
+
+.nav-inner {
+  width: 100%;
+  max-width: 84rem;
+  margin-inline: auto;
+  padding-inline: clamp(0.875rem, 2.5vw, 2rem);
+}
+
+.nav-rail {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 4rem;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* ── Slim variant: the two auth routes ──
+   The sign-in page already carries the brand, the promise and the form. A full
+   destination rail above it competes with all three and pushes the form down. On
+   these routes the bar is reduced to a waymark, a way back, and an account
+   control — and it is always solid, because it sits on the light form column
+   and the transparent treatment is only legible over the landing hero. */
+.nav-shell--slim .nav-rail {
+  min-height: 3.5rem;
+}
+
+.nav-shell--slim .nav-group--hide-slim {
+  display: none;
+}
+
+/* The drawer and the command palette both scroll-lock the page while open; this
+   is the class they put on <html> so nothing behind them moves under a finger. */
+.nav-scroll-locked {
+  overflow: hidden;
+}
+
+/* Every group that must not be squeezed declares it can shrink; the groups that
+   must never shrink leave the default. This is what stops the destination rail
+   from pushing the account control off-screen. */
+.nav-group {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.nav-group--tight {
+  flex: 0 0 auto;
+}
+
+/* The middle group centres itself in whatever space the outer two leave, so the
+   destination rail stays optically centred instead of drifting right next to the
+   account control as the bar narrows. */
+.nav-group--destinations {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+@media (max-width: 1023px) {
+  .nav-group--destinations {
+    display: none;
+  }
+}
+
+/* ── Waymark ── */
+.nav-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex: 0 0 auto;
+  text-decoration: none;
+  border-radius: 0.75rem;
+}
+
+.nav-brand__mark {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 2.125rem;
+  height: 2.125rem;
+  border-radius: 0.6875rem;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-line) 90%, transparent),
+    0 2px 8px -3px rgba(16, 15, 14, 0.3);
+  transition: transform 0.22s var(--ease-out), box-shadow 0.22s var(--ease-out);
+}
+
+.nav-brand:hover .nav-brand__mark {
+  transform: rotate(-4deg) scale(1.04);
+  box-shadow: 0 0 0 1px var(--color-line-strong), 0 6px 16px -6px rgba(16, 15, 14, 0.36);
+}
+
+.nav-brand__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nav-brand__name {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  color: var(--color-ink);
+  transition: color 0.3s var(--ease-out);
+}
+
+/* The wordmark collapses before the lockup does, because the logo tile carries
+   the identity on its own and a truncated "CareSpea…" beside it looks like a
+   bug rather than a responsive decision. */
+@media (max-width: 419px) {
+  .nav-brand__name {
+    display: none;
+  }
+}
+
+/* Over the landing hero the bar is transparent, so the waymark and the
+   destinations invert to light ink. Driven by one attribute on the shell rather
+   than by threading a `showSolid` flag through every class name. */
+.nav-shell[data-solid="false"] .nav-brand__name {
+  color: #fff;
+}
+
+.nav-shell[data-solid="false"] .nav-link,
+.nav-shell[data-solid="false"] .nav-btn {
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.nav-shell[data-solid="false"] .nav-link:hover,
+.nav-shell[data-solid="false"] .nav-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.nav-shell[data-solid="false"] .nav-link[aria-current="page"] {
+  color: #fff;
+}
+
+.nav-shell[data-solid="false"] .nav-indicator {
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+}
+
+.nav-shell[data-solid="false"] .nav-sep {
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(255, 255, 255, 0.28) 22%,
+    rgba(255, 255, 255, 0.28) 78%,
+    transparent
+  );
+}
+
+.nav-shell[data-solid="false"] .nav-btn__label {
+  color: inherit;
+}
+
+/* Hairline divider that fades out at both ends, so it reads as a soft seam
+   between groups rather than a hard rule cutting the bar in two. */
+.nav-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 1.25rem;
+  margin-inline: 0.375rem;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in oklab, var(--color-line-strong) 85%, transparent) 22%,
+    color-mix(in oklab, var(--color-line-strong) 85%, transparent) 78%,
+    transparent
+  );
+}
+
+/* Base destination. Transparent by default: the *active* state is drawn by a
+   single shared indicator element (see `.nav-indicator`) that slides between
+   items, so only one accent exists in the bar at any moment. */
+.nav-link {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  padding: 0.5rem 0.6875rem;
+  border-radius: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  color: var(--color-ink-2);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.18s var(--ease-out), background-color 0.18s var(--ease-out);
+}
+
+.nav-link:hover {
+  color: var(--color-ink);
+  background: color-mix(in oklab, var(--color-line-soft) 80%, transparent);
+}
+
+.nav-link[aria-current="page"] {
+  color: #c63a22;
+  font-weight: 600;
+}
+
+/* ── Labels, always ──
+   The previous build had a progressive-disclosure band here: from 1024px to
+   1400px the destinations dropped their labels and became an icon rail. That
+   band was the reason the bar looked broken — a run of eight icon pills is
+   indistinguishable from the utility icons beside it, so eight navigations and
+   five actions all read as one undifferentiated strip.
+
+   With three destinations in the centre zone the row needs no such trick. The
+   labels are simply always on, and the entire centre zone is removed below
+   1024px where the hamburger takes over. So there is no width at which a label
+   is squeezed, and no width at which navigation and utilities look alike. */
+.nav-link__label {
+  display: inline;
+}
+
+.nav-link__icon {
+  flex: 0 0 auto;
+  width: 1.0625rem;
+  height: 1.0625rem;
+  stroke-width: 1.85;
+}
+
+/* The one moving accent. Framer Motion writes the transform, so this element
+   only carries paint. */
+.nav-indicator {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 0.75rem;
+  background: color-mix(in oklab, #c63a22 11%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, #c63a22 16%, transparent);
+  pointer-events: none;
+}
+
+/* Square utility control (language, overflow, account trigger, menu). */
+.nav-btn {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  height: 2.25rem;
+  min-width: 2.25rem;
+  padding-inline: 0.5rem;
+  border: 0;
+  border-radius: 0.75rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-ink-2);
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.18s var(--ease-out), background-color 0.18s var(--ease-out);
+}
+
+.nav-btn:hover {
+  color: var(--color-ink);
+  background: color-mix(in oklab, var(--color-line-soft) 80%, transparent);
+}
+
+/* Two attribute values reach this rule: "true" for a selected language, "page"
+   for a trigger whose panel contains the current route (More). Both mean the
+   same thing visually, so both are matched here. */
+.nav-btn[aria-expanded="true"],
+.nav-btn[aria-current="true"],
+.nav-btn[aria-current="page"] {
+  color: #c63a22;
+  background: color-mix(in oklab, #c63a22 10%, transparent);
+}
+
+.nav-btn__chev {
+  width: 0.8125rem;
+  height: 0.8125rem;
+  stroke-width: 2.25;
+  transition: transform 0.22s var(--ease-out);
+}
+
+.nav-btn[aria-expanded="true"] .nav-btn__chev {
+  transform: rotate(180deg);
+}
+
+.nav-btn__icon {
+  flex: 0 0 auto;
+  width: 1.0625rem;
+  height: 1.0625rem;
+  stroke-width: 1.85;
+}
+
+/* Utility labels are the first thing to go when the bar narrows — the icon plus
+   the tooltip still identifies the control, and these are secondary to the
+   destinations. The language name and the account name return at `2xl`, where
+   there is space for them and they are genuinely useful. */
+.nav-btn__label {
+  display: none;
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (min-width: 1536px) {
+  .nav-btn__label {
+    display: block;
+  }
+}
+
+.nav-btn__chev {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  /* The account trigger wraps a 28px avatar, so it needs almost no inline
+     padding — the default 0.5rem would leave the disc floating in a 36px pill. */
+  .nav-btn--avatar {
+    padding-inline: 0.1875rem;
+  }
+
+  .nav-btn__chev {
+    display: block;
+  }
+}
+
+/* ── "More" ──
+   The one utility that keeps its word. It is a disclosure, not an action, and
+   an ellipsis alone does not say "there are more places to go here" — so it is
+   the single place in the right zone where text is worth its width. The label
+   also keeps it from reading as a fifth icon in a row of icons, which is the
+   exact ambiguity the icon rail created everywhere else. */
+.nav-btn--more {
+  gap: 0.3125rem;
+  padding-inline: 0.5rem 0.375rem;
+}
+
+.nav-btn--more .nav-btn__label {
+  display: block;
+  font-weight: 600;
+}
+
+.nav-btn--more .nav-btn__chev {
+  display: block;
+}
+
+/* Square, icon-only, no label at any width: language and the account avatar.
+   Both already carry a tooltip and an `aria-label`, so the icon is never the
+   only thing identifying them. */
+.nav-btn--icon {
+  padding-inline: 0.4375rem;
+}
+
+
+/* ── Account avatar ──
+   The avatar is the trigger, not a decoration inside a trigger: a nurse on a
+   shared ward tablet needs one unambiguous control to sign out, and an
+   initial-only disc is far easier to hit than a 32px row of text. */
+.nav-avatar {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: #fff;
+  background: linear-gradient(140deg, #e05a3a 0%, #a92f1a 100%);
+  box-shadow: 0 0 0 1px color-mix(in oklab, #c63a22 30%, transparent),
+    0 1px 2px rgba(16, 15, 14, 0.2);
+  transition: box-shadow 0.18s var(--ease-out);
+}
+
+.nav-btn:hover .nav-avatar {
+  box-shadow: 0 0 0 2px color-mix(in oklab, #c63a22 28%, transparent),
+    0 2px 6px rgba(16, 15, 14, 0.24);
+}
+
+/* ── Sign in (signed out) ──
+   Signed out, the bar's job is to say so. A quiet text link is right: a filled
+   button here would compete with Emergency, and the form is one click away. */
+.nav-signin {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 2.25rem;
+  padding-inline: 0.8125rem;
+  flex: 0 0 auto;
+  border-radius: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+  color: #c63a22;
+  background: color-mix(in oklab, #c63a22 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, #c63a22 20%, transparent);
+  transition: color 0.18s var(--ease-out), background-color 0.18s var(--ease-out);
+}
+
+.nav-signin:hover {
+  color: #fff;
+  background: #c63a22;
+}
+
+.nav-signin__icon {
+  width: 1.0625rem;
+  height: 1.0625rem;
+  stroke-width: 2;
+}
+
+.nav-shell[data-solid="false"] .nav-signin {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.26);
+}
+
+.nav-shell[data-solid="false"] .nav-signin:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* ── Search: a square icon, not a field ──
+   The bar used to carry a `Search ⌘K` box roughly 10rem wide at every width
+   above `lg`. It is the clearest example of the general problem: an affordance
+   sized for the widest state it will ever be in, held permanently, to advertise
+   a shortcut.
+
+   The shortcut is better advertised on the keycap than on a whole input. So the
+   control is now a 2.25rem square holding a magnifier and the ⌘/Ctrl cap, and
+   the field itself only exists once the palette is open — where it is the only
+   thing on screen and can be as wide as it likes. The cap is dropped below
+   `lg`, where a 2.25rem square next to a 2.25rem square is a perfectly clear
+   button and the keycap is just noise. */
+.nav-search {
+  overflow: hidden;
+}
+
+.nav-search__kbd {
+  width: auto;
+  min-width: 1.125rem;
+  height: 1.125rem;
+  font-size: 0.625rem;
+  border-radius: 0.25rem;
+}
+
+@media (max-width: 1023px) {
+  .nav-search__kbd {
+    display: none;
+  }
+}
+
+.nav-shell[data-solid="false"] .nav-search {
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.nav-shell[data-solid="false"] .nav-search:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.nav-shell[data-solid="false"] .kbd {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+/* Emergency is never two clicks away and never icon-only on desktop, so it
+   keeps its label at every width and gets the only filled treatment in the bar. */
+.nav-emergency {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  height: 2.25rem;
+  padding-inline: 0.75rem;
+  border-radius: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+  color: #fff;
+  background: #c63a22;
+  box-shadow: 0 1px 2px rgba(198, 58, 34, 0.24);
+  transition: background-color 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out),
+    transform 0.18s var(--ease-out);
+}
+
+.nav-emergency:hover {
+  background: #a92f1a;
+  box-shadow: 0 6px 18px -6px rgba(198, 58, 34, 0.5);
+  transform: translateY(-1px);
+}
+
+.nav-emergency:active {
+  transform: translateY(0);
+}
+
+.nav-emergency[aria-current="page"] {
+  background: #8f2414;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.28);
+}
+
+.nav-emergency__icon {
+  width: 1.0625rem;
+  height: 1.0625rem;
+  stroke-width: 2;
+}
+
+/* Tooltip for the icon-only rail. Pure CSS, no JS, no layout thrash: it is a
+   positioned pseudo-element that fades in on hover *and* on keyboard focus. */
+.nav-tip {
+  position: relative;
+}
+
+.nav-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 50%;
+  z-index: 60;
+  padding: 0.3125rem 0.5rem;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  white-space: nowrap;
+  color: #fff;
+  background: color-mix(in oklab, #1f1f1f 94%, transparent);
+  box-shadow: var(--shadow-pop);
+  opacity: 0;
+  transform: translate(-50%, -4px);
+  pointer-events: none;
+  transition: opacity 0.16s var(--ease-out), transform 0.16s var(--ease-out);
+}
+
+.nav-tip:hover::after,
+.nav-tip:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* From 1400px the label is back in the row, so the tooltip would be a duplicate.
+   `content: none` removes the box from the layer entirely, rather than
+   `opacity: 0`, which would leave an invisible element sitting over the page
+   content for the rest of the session. */
+@media (min-width: 1400px) {
+  .nav-tip::after {
+    content: none;
+  }
+}
+
+/* The one filled control in the centre zone. It leads the destinations because it
+   is the only one that *does* something rather than showing a record, and the
+   brand fill is what makes that legible at a glance without another label. */
+.nav-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 2.25rem;
+  margin-right: 0.375rem;
+  padding-inline: 0.75rem;
+  border-radius: 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+  color: #fff;
+  background: #c63a22;
+  box-shadow: 0 1px 2px rgba(198, 58, 34, 0.24);
+  transition: background-color 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out),
+    transform 0.18s var(--ease-out);
+}
+
+.nav-mode:hover {
+  background: #a92f1a;
+  box-shadow: 0 6px 18px -6px rgba(198, 58, 34, 0.5);
+  transform: translateY(-1px);
+}
+
+.nav-mode:active {
+  transform: translateY(0);
+}
+
+/* Already inside the workspace: darken and ring rather than lift, so the hover
+   lift is still available for the "go there" reading and never doubles up. */
+.nav-mode[aria-current="page"] {
+  background: #8f2414;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.28);
+}
+
+.nav-mode__icon {
+  width: 1.0625rem;
+  height: 1.0625rem;
+  stroke-width: 2;
+}
+
+/* ── Which control shows at which width ──
+   These live at the END of the nav component block, on purpose.
+
+   `.nav-compact-only` is applied to the hamburger alongside `.nav-btn`, and
+   `.nav-btn` sets `display: inline-flex`. Both selectors are one class, so they
+   have equal specificity and source order decides. While this rule sat *above*
+   `.nav-btn`, the button's `display` won and the hamburger was painted on every
+   screen — including desktop, where `.drawer` is `display: none`, so pressing
+   it opened nothing at all. A dead control that looks live is worse than a
+   missing one.
+
+   Anything that decides `display` for a component must therefore be declared
+   after the component's own rule. */
+.nav-compact-only {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  .nav-compact-only {
+    display: inline-flex;
+  }
+}
+
+/* ── Dropdown panels ── */
+.nav-drop {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 50;
+  min-width: 13rem;
+  padding: 0.375rem;
+  border-radius: 1rem;
+  background: #fff;
+  box-shadow: var(--shadow-pop);
+  /* The hairline is drawn as a ring rather than a border so it is not clipped
+     by the rounded corners plus the shadow spread. */
+  outline: 1px solid color-mix(in oklab, var(--color-line) 90%, transparent);
+  outline-offset: -1px;
+  transform-origin: top right;
+}
+
+.nav-drop__label {
+  padding: 0.5rem 0.625rem 0.375rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+
+/* Identity block at the top of the account panel. It is a header, not a menu
+   item: no hover, no pointer, just a name and a role above the two actions. */
+.nav-drop__head {
+  padding: 0.5rem 0.625rem 0.625rem;
+  margin-bottom: 0.25rem;
+  border-bottom: 1px solid var(--color-line-soft);
+  font-size: 0.875rem;
+  line-height: 1.35;
+  color: var(--color-ink);
+}
+
+.nav-drop__head span {
+  display: block;
+  margin-top: 0.0625rem;
+  font-size: 0.75rem;
+  color: var(--color-ink-3);
+}
+
+.nav-drop__item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border: 0;
+  border-radius: 0.625rem;
+  font: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  color: var(--color-ink-2);
+  background: transparent;
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.14s var(--ease-out), background-color 0.14s var(--ease-out);
+}
+
+.nav-drop__item:hover,
+.nav-drop__item:focus-visible {
+  color: var(--color-ink);
+  background: var(--color-line-soft);
+}
+
+.nav-drop__item[aria-current="page"] {
+  color: #c63a22;
+  font-weight: 600;
+  background: color-mix(in oklab, #c63a22 8%, transparent);
+}
+
+.nav-drop__item--danger {
+  color: #c63a22;
+  font-weight: 500;
+}
+
+.nav-drop__item--danger:hover,
+.nav-drop__item--danger:focus-visible {
+  background: color-mix(in oklab, #c63a22 8%, transparent);
+}
+
+.nav-drop__item svg {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  stroke-width: 1.9;
+}
+
+.nav-drop__meta {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: var(--color-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-drop__rule {
+  height: 1px;
+  margin: 0.375rem 0.25rem;
+  background: var(--color-line-soft);
+}
+
+/* ── Command palette (Cmd/Ctrl-K) ──
+   This is where the search *field* lives, which is the whole point of making the
+   bar's trigger an icon: the input can be as wide as it needs because it is the
+   only thing on screen. It opens near the top rather than centred, so it reads as
+   the bar's own affordance having expanded downward rather than as a modal
+   dialog from nowhere. */
+.cmdk-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: clamp(0.75rem, 10vh, 6rem) 1rem 1rem;
+  background: color-mix(in oklab, #17130f 34%, transparent);
+  backdrop-filter: blur(6px) saturate(1.2);
+  -webkit-backdrop-filter: blur(6px) saturate(1.2);
+}
+
+.cmdk {
+  width: 100%;
+  max-width: 40rem;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  background: #fff;
+  box-shadow: 0 40px 90px -20px rgba(12, 10, 8, 0.5);
+  outline: 1px solid color-mix(in oklab, var(--color-line) 88%, transparent);
+  outline-offset: -1px;
+  /* Promoted to its own layer for the open/close transform. Without this the
+     spring animates the palette on the main thread *and* forces the blurred
+     scrim behind it to re-composite every frame, which is what made the overlay
+     feel like it was dragging behind the click. */
+  will-change: transform, opacity;
+}
+
+.cmdk__field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+
+.cmdk__field svg {
+  flex: 0 0 auto;
+  width: 1.125rem;
+  height: 1.125rem;
+  color: var(--color-ink-3);
+}
+
+.cmdk__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 1rem;
+  color: var(--color-ink);
+  outline: none;
+}
+
+.cmdk__input::placeholder {
+  color: var(--color-ink-3);
+}
+
+.cmdk__kbd {
+  flex: 0 0 auto;
+}
+
+.cmdk__list {
+  max-height: min(24rem, 55dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.375rem;
+  scrollbar-gutter: stable;
+}
+
+.cmdk__group {
+  padding: 0.5rem 0.625rem 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+
+.cmdk__item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.5625rem 0.625rem;
+  border: 0;
+  border-radius: 0.75rem;
+  font: inherit;
+  font-size: 0.9375rem;
+  text-align: left;
+  color: var(--color-ink);
+  background: transparent;
+  cursor: pointer;
+  text-decoration: none;
+  scroll-margin: 0.5rem;
+}
+
+.cmdk__item[data-active="true"] {
+  color: #a92f1a;
+  background: color-mix(in oklab, #c63a22 9%, transparent);
+}
+
+.cmdk__item svg {
+  flex: 0 0 auto;
+  width: 1.0625rem;
+  height: 1.0625rem;
+  stroke-width: 1.8;
+  color: var(--color-ink-3);
+}
+
+.cmdk__item[data-active="true"] svg {
+  color: #c63a22;
+}
+
+.cmdk__item-hint {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: var(--color-ink-3);
+  white-space: nowrap;
+}
+
+.cmdk__empty {
+  padding: 2.25rem 1rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--color-ink-3);
+}
+
+.cmdk__foot {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0.875rem;
+  border-top: 1px solid var(--color-line-soft);
+  background: var(--color-shell);
+  font-size: 0.6875rem;
+  color: var(--color-ink-3);
+}
+
+.cmdk__foot-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  white-space: nowrap;
+}
+
+.cmdk__foot-group svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  stroke-width: 2;
+}
+
+.cmdk__foot-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Keyboard cap. Rendered as a raised key so the palette teaches its own
+   shortcuts instead of only listing destinations. */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding-inline: 0.3125rem;
+  border-radius: 0.3125rem;
+  font-family: inherit;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-ink-2);
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--color-line-strong), 0 1px 0 var(--color-line-strong);
+}
+
+/* ── Input-method switch (Hand Mode / Eye Mode) ──
+   Lives in the workspace header, not the site bar. See `ModeSwitcher.tsx` for
+   why it is a segmented control and not a dropdown.
+
+   Sized for the people using it: a patient who cannot move their hands may be
+   here to use Eye Mode, and a patient with an injured arm may be here to use
+   Hand Mode. Either way the control has to be a large, unambiguous, always-open
+   target rather than something revealed by a second click, so the hit area is
+   2.75rem tall and the whole cell is the button — not just the icon. */
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: 0.9375rem;
+  background: var(--color-shell);
+  box-shadow: inset 0 0 0 1px var(--color-line);
+}
+
+.mode-switch__opt {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4375rem;
+  height: 2.75rem;
+  padding-inline: 1rem;
+  border: 0;
+  border-radius: 0.6875rem;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--color-ink-2);
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.18s var(--ease-out);
+}
+
+.mode-switch__opt[aria-checked="true"] {
+  color: #fff;
+}
+
+.mode-switch__opt:hover[aria-checked="false"] {
+  color: var(--color-ink);
+}
+
+/* The sliding pill. Framer writes the transform, so this element only carries
+   paint — and because it is one shared element moving between siblings, the
+   switch reads as a single control changing state rather than two buttons
+   taking turns being on. */
+.mode-switch__pill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 0.6875rem;
+  background: linear-gradient(140deg, #d64a2c 0%, #b8331c 100%);
+  box-shadow: 0 2px 8px -2px color-mix(in oklab, #c63a22 46%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.mode-switch__icon {
+  flex: 0 0 auto;
+  width: 1.0625rem;
+  height: 1.0625rem;
+  stroke-width: 1.9;
+}
+
+.mode-switch__opt[aria-checked="false"] .mode-switch__icon {
+  color: var(--color-ink-3);
+}
+
+.mode-switch__opt:hover[aria-checked="false"] .mode-switch__icon {
+  color: var(--color-ink-2);
+}
+
+/* On a phone the two labels plus two icons are 220px of control in a 360px
+   viewport. The word goes and the icon stays. The text is visually hidden with
+   the standard clip-path pattern rather than removed, so it is still the
+   button's accessible name — the control is never reduced to an unlabelled
+   icon. */
+@media (max-width: 479px) {
+  .mode-switch {
+    display: flex;
+  }
+
+  .mode-switch__opt {
+    flex: 1 1 0;
+    padding-inline: 0.5rem;
+  }
+
+  .mode-switch__text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+/* ── Mobile drawer ──
+   Taken out of flow and animated on `transform` + `opacity` only.
+
+   The previous version sat in flow and Framer animated `height: 0 → auto` over a
+   list of ten rows. `height` is a layout property, so every one of those frames
+   re-laid-out the sheet *and* the page behind it, and `auto` has to be measured
+   from the content each time the transition starts. On a ward tablet that is the
+   difference between the sheet arriving and the sheet crawling.
+
+   Absolutely positioned against the bar it is out of the document flow, so its
+   height is the content's own and costs nothing to compute, and the open/close
+   is a pure compositor transform. The blur is behind the transform, so it is
+   rasterised once per open rather than once per frame. */
+.drawer {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  display: block;
+  border-top: 1px solid var(--color-line-soft);
+  background: color-mix(in oklab, #fff 94%, transparent);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  transform-origin: top center;
+  will-change: transform, opacity;
+}
+
+/* From `lg` the rail is a real rail, so the sheet is not merely closed — it is
+   removed from the layer, and the toggle that opens it is display:none in the
+   same breakpoint. One breakpoint, stated once, drives both halves. */
+@media (min-width: 1024px) {
+  .drawer {
+    display: none;
+  }
+}
+
+.drawer__scroll {
+  max-height: calc(100dvh - 4rem - env(safe-area-inset-top, 0px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.75rem 1rem calc(1.5rem + env(safe-area-inset-bottom, 0px));
+  scrollbar-gutter: stable;
+}
+
+.drawer__group + .drawer__group {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-line-soft);
+}
+
+.drawer__items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.drawer__label {
+  padding: 0 0.75rem 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+
+.drawer__who {
+  padding: 0.5rem 0.75rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.35;
+  color: var(--color-ink);
+}
+
+.drawer__who span {
+  display: block;
+  margin-top: 0.0625rem;
+  font-size: 0.75rem;
+  color: var(--color-ink-3);
+}
+
+.drawer__link {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  width: 100%;
+  padding: 0.75rem;
+  border: 0;
+  border-radius: 0.875rem;
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-align: left;
+  color: var(--color-ink-2);
+  background: transparent;
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.14s var(--ease-out), background-color 0.14s var(--ease-out);
+}
+
+.drawer__link:active {
+  background: var(--color-line-soft);
+}
+
+.drawer__link[aria-current="page"] {
+  color: #c63a22;
+  font-weight: 600;
+  background: color-mix(in oklab, #c63a22 8%, transparent);
+}
+
+.drawer__link--danger {
+  color: #c63a22;
+}
+
+.drawer__link--danger:active {
+  background: color-mix(in oklab, #c63a22 8%, transparent);
+}
+
+.drawer__icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.625rem;
+  color: var(--color-ink-2);
+  background: var(--color-line-soft);
+}
+
+.drawer__link[aria-current="page"] .drawer__icon {
+  color: #fff;
+  background: #c63a22;
+}
+
+.drawer__icon svg {
+  width: 1.0625rem;
+  height: 1.0625rem;
+  stroke-width: 1.9;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   AUTH — shared shell for /login and /register
+   ════════════════════════════════════════════════════════════════════════════
+
+   A full-bleed two-panel layout: the brand panel owns the left half on desktop
+   and collapses above the form on mobile. The old page was a 26rem card floating
+   in the middle of a 200vmax pinwheel, with the logo, wordmark, heading, sub,
+   card, trust line and register line stacked in one narrow column — seven
+   competing elements in 416px. The split gives the motion somewhere to live
+   *beside* the form rather than underneath it.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.auth {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-height: 100dvh;
+  background: var(--color-shell);
+}
+
+@media (min-width: 1024px) {
+  .auth {
+    /* `minmax(0, 27rem)` on the form column is load-bearing: without it a long
+       unbroken string in an input can force the track wider than its share and
+       push the brand panel off-screen. */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 27rem);
+    height: 100dvh;
+    overflow: hidden;
+  }
+}
+
+.auth__brand {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  isolation: isolate;
+  overflow: hidden;
+  color: var(--color-stage-ink);
+  background: var(--color-stage);
+  contain: paint;
+  /* Mobile: a *band*, not a half-screen panel. The old page gave the stage the
+     entire viewport and then stacked logo, wordmark, heading, sub, card, trust
+     line and register line inside a 416px column on top of it. Here the stage
+     keeps only the mark and one line of the promise — enough that the pinwheel
+     still reads as the brand — and hands the rest of the screen back to the
+     form, which is the thing people actually came for. */
+  padding: calc(4.75rem + env(safe-area-inset-top, 0px)) clamp(1.25rem, 5vw, 2rem) 1.75rem;
+  gap: 0.875rem;
+}
+
+@media (min-width: 1024px) {
+  .auth__brand {
+    /* Desktop: the brand owns the left half and distributes its content across
+       the full height, top to bottom. */
+    justify-content: space-between;
+    gap: 0;
+    padding: clamp(2rem, 4vw, 3.5rem);
+  }
+}
+
+.auth__brand-body {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(1.5rem, 3vw, 2.5rem);
+  max-width: 30rem;
+  margin-block: auto;
+  padding-block: 2.5rem;
+}
+
+@media (min-width: 1024px) {
+  .auth__brand-body {
+    margin-block: auto;
+    padding-block: 2.5rem;
+  }
+}
+
+/* Below `lg` the brand only carries the promise, so the supporting list and the
+   footnote would push the heading off the top of the band. */
+@media (max-width: 1023px) {
+  .auth__brand-body {
+    gap: 0.625rem;
+    padding-block: 0;
+  }
+
+  .auth__lede,
+  .auth__points,
+  .auth__brand-foot {
+    display: none;
+  }
+
+  .auth__headline {
+    font-size: clamp(1.375rem, 5.5vw, 1.75rem);
+  }
+}
+
+.auth__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  align-self: flex-start;
+  padding: 0.3125rem 0.6875rem 0.3125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-stage-ink-2);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.11);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.auth__eyebrow svg {
+  width: 0.8125rem;
+  height: 0.8125rem;
+  color: #6ee7b7;
+}
+
+.auth__headline {
+  margin: 0;
+  font-family: var(--font-family-display);
+  font-size: clamp(1.875rem, 3.1vw, 2.75rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: #fff;
+  /* `balance` stops the last line from being a single orphan word. */
+  text-wrap: balance;
+}
+
+.auth__headline em {
+  font-style: normal;
+  background: linear-gradient(100deg, #f6a37a 0%, #e46569 45%, #8ea9f0 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.auth__lede {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--color-stage-ink-2);
+  text-wrap: pretty;
+}
+
+.auth__points {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.auth__point {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--color-stage-ink-2);
+  text-wrap: pretty;
+}
+
+.auth__point-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 1.625rem;
+  height: 1.625rem;
+  margin-top: -0.0625rem;
+  border-radius: 0.5rem;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.auth__point-icon svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  stroke-width: 2.25;
+}
+
+.auth__brand-foot {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.25rem;
+  font-size: 0.75rem;
+  color: var(--color-stage-ink-3);
+}
+
+.auth__brand-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+}
+
+.auth__brand-foot svg {
+  width: 0.8125rem;
+  height: 0.8125rem;
+  stroke-width: 2;
+}
+
+/* ── Form column ── */
+.auth__form {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--color-shell);
+  scrollbar-gutter: stable;
+}
+
+.auth__form-inner {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1.5rem;
+  width: 100%;
+  max-width: 27rem;
+  min-height: 100%;
+  margin-inline: auto;
+  /* The top padding is the fixed nav rail, which is `nav-slim` on these routes
+     (3.5rem + safe area) plus a breath of space. Without it the heading sits
+     under the bar. */
+  padding: calc(4.25rem + env(safe-area-inset-top, 0px)) clamp(1.25rem, 5vw, 2rem)
+    clamp(1.75rem, 4vw, 2.5rem);
+  /* The entrance is a keyframe, not a mounted `ready` flag. A flag means the
+     column is `opacity: 0` until React hydrates, so a slow device — or a
+     blocked script — leaves a blank page where the sign-in form should be. */
+  animation: auth-enter 0.6s var(--ease-out) both;
+}
+
+@keyframes auth-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  .auth__form-inner {
+    /* Taller bar on desktop because the destinations are back. */
+    padding-block: 5.5rem 2.5rem;
+  }
+}
+
+/* Heading block: title + subtitle as one optically centred unit, so the gap
+   between them is tighter than the gap to the card and the eye lands on the
+   form first. */
+.auth__head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.auth__brandmark {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  align-self: flex-start;
+  text-decoration: none;
+  color: var(--color-ink);
+}
+
+/* On the dark stage the same waymark needs a light-ink rule instead of a grey
+   one, and a translucent plate so the logo is not read off a moving gradient. */
+.auth__brandmark--onstage {
+  position: relative;
+  z-index: 3;
+  color: #fff;
+}
+
+.auth__brandmark--onstage .auth__brandmark-img {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22), 0 6px 18px -8px rgba(0, 0, 0, 0.7);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.auth__brandmark--onstage .auth__brandmark-name {
+  color: #fff;
+}
+
+.auth__brandmark-img {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.75rem;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-line) 90%, transparent),
+    0 4px 12px -4px rgba(16, 15, 14, 0.24);
+}
+
+.auth__brandmark-name {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
+}
+
+.auth__title {
+  margin: 0;
+  font-size: clamp(1.5rem, 4vw, 1.75rem);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
+  text-wrap: balance;
+}
+
+.auth__subtitle {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--color-ink-2);
+  text-wrap: pretty;
+}
+
+.auth__card {
+  border-radius: 1.25rem;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 15, 14, 0.04), 0 12px 32px -18px rgba(16, 15, 14, 0.22);
+  outline: 1px solid color-mix(in oklab, var(--color-line) 82%, transparent);
+  outline-offset: -1px;
+}
+
+.auth__section {
+  padding: 1.25rem;
+}
+
+.auth__section + .auth__section {
+  border-top: 1px solid var(--color-line-soft);
+}
+
+@media (min-width: 640px) {
+  .auth__section {
+    padding: 1.5rem;
+  }
+}
+
+/* The three sections of the sign-in card are one surface split by hairlines, so
+   the spacing between them is carried by the rule rather than by stacking a
+   second full padding on top of it. Without these the card grows three empty
+   gutters tall and reads as three boxes, which is what made it look crowded:
+   more rules and more padding, not more air. */
+.auth__section--social {
+  padding-bottom: 0;
+}
+
+.auth__section--social .auth-rule {
+  margin-bottom: 0;
+}
+
+.auth__section--tabs {
+  padding-bottom: 0;
+}
+
+.auth__section--form {
+  padding-top: 1rem;
+}
+
+/* A note under the form, not a field above it. */
+.auth__section--note {
+  padding-block: 0.875rem;
+  background: color-mix(in oklab, var(--color-shell) 70%, transparent);
+  border-radius: 0 0 1.25rem 1.25rem;
+}
+
+/* Every vertical run inside a section or a form. One gap token for the whole
+   auth surface, so the rhythm cannot drift between the two pages. */
+.auth-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.125rem;
+}
+
+/* ── Method tabs ── */
+.auth-tabs {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: 0.875rem;
+  background: var(--color-line-soft);
+}
+
+.auth-tab {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4375rem;
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  border-radius: 0.625rem;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-ink-2);
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.18s var(--ease-out);
+}
+
+.auth-tab[aria-selected="true"] {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.auth-tab svg {
+  width: 0.9375rem;
+  height: 0.9375rem;
+  stroke-width: 1.9;
+}
+
+.auth-tab__indicator {
+  position: absolute;
+  inset: 0.25rem auto 0.25rem 0.25rem;
+  z-index: -1;
+  border-radius: 0.625rem;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 15, 14, 0.08), 0 0 0 1px color-mix(in oklab, var(--color-line) 70%, transparent);
+}
+
+/* ── Fields ── */
+.auth-field {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: 3rem;
+  padding-inline: 0.875rem;
+  border-radius: 0.875rem;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--color-line);
+  transition: box-shadow 0.18s var(--ease-out), background-color 0.18s var(--ease-out);
+}
+
+.auth-field:hover {
+  box-shadow: inset 0 0 0 1px var(--color-line-strong);
+}
+
+/* Focus is expressed on the *wrapper*, not the input, so the ring wraps the icon
+   and the reveal button too. `box-shadow` rather than `outline` because the
+   wrapper is rounded and the shadow follows the radius exactly. */
+.auth-field:focus-within {
+  background: #fff;
+  box-shadow: inset 0 0 0 1.5px #c63a22, 0 0 0 4px color-mix(in oklab, #c63a22 13%, transparent);
+}
+
+.auth-field[data-invalid="true"] {
+  box-shadow: inset 0 0 0 1.5px #d94a4a, 0 0 0 4px color-mix(in oklab, #d94a4a 12%, transparent);
+}
+
+.auth-field__icon {
+  flex: 0 0 auto;
+  width: 1.0625rem;
+  height: 1.0625rem;
+  stroke-width: 1.8;
+  color: var(--color-ink-3);
+  transition: color 0.18s var(--ease-out);
+}
+
+.auth-field:focus-within .auth-field__icon {
+  color: #c63a22;
+}
+
+.auth-field[data-invalid="true"] .auth-field__icon {
+  color: #d94a4a;
+}
+
+.auth-field__input {
+  flex: 1 1 auto;
+  /* Without this a long value refuses to shrink and bursts the flex row. */
+  min-width: 0;
+  padding-block: 0.75rem;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.9375rem;
+  color: var(--color-ink);
+  outline: none;
+}
+
+.auth-field__input::placeholder {
+  color: color-mix(in oklab, var(--color-ink-3) 78%, transparent);
+}
+
+.auth-field__input:disabled {
+  color: var(--color-ink-3);
+  cursor: not-allowed;
+}
+
+/* Chrome paints an opaque autofill background that sits *above* the field's own
+   background and ignores `background: transparent`. The long `-webkit` shadow
+   stack is the only reliable way to keep autofilled fields on-brand. */
+.auth-field__input:-webkit-autofill,
+.auth-field__input:-webkit-autofill:hover,
+.auth-field__input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--color-ink);
+  caret-color: var(--color-ink);
+  -webkit-box-shadow: 0 0 0 1000px #fff inset;
+  box-shadow: 0 0 0 1000px #fff inset;
+  transition: background-color 9999s ease-in-out 0s;
+}
+
+.auth-field__action {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  margin-right: -0.375rem;
+  border: 0;
+  border-radius: 0.5rem;
+  color: var(--color-ink-3);
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.16s var(--ease-out), background-color 0.16s var(--ease-out);
+}
+
+.auth-field__action:hover {
+  color: var(--color-ink);
+  background: var(--color-line-soft);
+}
+
+.auth-field__action svg {
+  width: 1.0625rem;
+  height: 1.0625rem;
+  stroke-width: 1.9;
+}
+
+.auth-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.4375rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-ink-2);
+}
+
+.auth-label__text {
+  color: var(--color-ink);
+}
+
+.auth-hint {
+  margin: 0.4375rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--color-ink-3);
+  text-wrap: pretty;
+}
+
+.auth-hint--error {
+  display: flex;
+  align-items: center;
+  gap: 0.3125rem;
+  color: #a32d18;
+}
+
+.auth-hint--error svg {
+  flex: 0 0 auto;
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.auth-link {
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-ink-2);
+  background: transparent;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--color-ink-3) 55%, transparent);
+  text-underline-offset: 0.1875rem;
+  transition: color 0.16s var(--ease-out);
+}
+
+.auth-link:hover {
+  color: #c63a22;
+  text-decoration-color: currentColor;
+}
+
+.auth-link--inline {
+  font-size: 0.8125rem;
+  color: #c63a22;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.auth-link--inline:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.1875rem;
+}
+
+/* ── Primary action ── */
+.auth-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2.875rem;
+  padding-inline: 1rem;
+  border: 0;
+  border-radius: 0.875rem;
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #fff;
+  background: #c63a22;
+  cursor: pointer;
+  overflow: hidden;
+  transition: background-color 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out),
+    transform 0.18s var(--ease-out);
+}
+
+.auth-btn:hover:not(:disabled) {
+  background: #a92f1a;
+  box-shadow: 0 8px 20px -8px rgba(198, 58, 34, 0.6);
+  transform: translateY(-1px);
+}
+
+.auth-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.auth-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.auth-btn svg {
+  width: 1rem;
+  height: 1rem;
+  stroke-width: 2.1;
+}
+
+/* Sheen: a single skewed highlight that sweeps on hover. Pure CSS, and it is
+   gated on hover so it never costs anything at rest or on touch. */
+.auth-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 -60%;
+  width: 45%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  transform: skewX(-18deg);
+  pointer-events: none;
+}
+
+.auth-btn:hover:not(:disabled)::after {
+  animation: auth-sheen 0.7s var(--ease-out);
+}
+
+@keyframes auth-sheen {
+  to {
+    left: 115%;
+  }
+}
+
+/* Secondary / social action. */
+.auth-btn--ghost {
+  color: var(--color-ink);
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--color-line-strong);
+}
+
+.auth-btn--ghost:hover:not(:disabled) {
+  color: var(--color-ink);
+  background: var(--color-shell);
+  box-shadow: inset 0 0 0 1px var(--color-line-strong), 0 6px 16px -10px rgba(16, 15, 14, 0.3);
+}
+
+.auth-btn--ghost::after {
+  display: none;
+}
+
+.auth-btn--block-danger {
+  color: #c63a22;
+  background: transparent;
+  box-shadow: none;
+}
+
+.auth-btn--block-danger:hover:not(:disabled) {
+  background: color-mix(in oklab, #c63a22 8%, transparent);
+  box-shadow: none;
+  transform: none;
+}
+
+.auth-btn--block-danger::after {
+  display: none;
+}
+
+.auth-spinner {
+  width: 1rem;
+  height: 1rem;
+  animation: auth-spin 0.7s linear infinite;
+}
+
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Alerts ── */
+.auth-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 0.75rem 0.875rem;
+  border-radius: 0.875rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.auth-alert svg {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.0625rem;
+  stroke-width: 2;
+}
+
+.auth-alert--error {
+  color: #8c2412;
+  background: #fdf3f1;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, #d94a4a 22%, transparent);
+}
+
+.auth-alert--error svg {
+  color: #d94a4a;
+}
+
+.auth-alert--info {
+  color: #14532d;
+  background: #f1f9f4;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, #22a67e 24%, transparent);
+}
+
+.auth-alert--info svg {
+  color: #22a67e;
+}
+
+.auth-alert--neutral {
+  color: var(--color-ink-2);
+  background: var(--color-shell);
+  box-shadow: inset 0 0 0 1px var(--color-line);
+}
+
+.auth-alert--neutral svg {
+  color: var(--color-ink-3);
+}
+
+/* ── Segmented one-time code ── */
+.auth-otp {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.375rem;
+}
+
+.auth-otp__cell {
+  /* `min-width: 0` is required or the grid track refuses to shrink below the
+     input's default size on narrow phones. */
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 5 / 6;
+  padding: 0;
+  border: 0;
+  border-radius: 0.75rem;
+  font: inherit;
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--color-line);
+  transition: box-shadow 0.16s var(--ease-out), transform 0.16s var(--ease-out);
+  appearance: none;
+  -moz-appearance: textfield;
+}
+
+.auth-otp__cell::-webkit-outer-spin-button,
+.auth-otp__cell::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.auth-otp__cell:hover {
+  box-shadow: inset 0 0 0 1px var(--color-line-strong);
+}
+
+.auth-otp__cell:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px #c63a22, 0 0 0 4px color-mix(in oklab, #c63a22 13%, transparent);
+  transform: translateY(-1px);
+}
+
+.auth-otp__cell[data-filled="true"] {
+  box-shadow: inset 0 0 0 1.5px color-mix(in oklab, #22a67e 45%, transparent);
+  background: color-mix(in oklab, #22a67e 5%, #fff);
+}
+
+/* iOS paints a yellow plate behind a field it decides is a one-time-code field,
+   and the first cell does carry `autocomplete="one-time-code"` so the platform
+   can offer the SMS code. Same long shadow trick as the main field. */
+.auth-otp__cell:-webkit-autofill,
+.auth-otp__cell:-webkit-autofill:hover,
+.auth-otp__cell:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--color-ink);
+  caret-color: var(--color-ink);
+  -webkit-box-shadow: 0 0 0 1000px #fff inset;
+  box-shadow: 0 0 0 1000px #fff inset;
+  transition: background-color 9999s ease-in-out 0s;
+}
+
+/* Caret parked in the first cell until the code is actually being typed, so the
+   cell is not lit up on a form the user has not reached yet. */
+.auth-otp[data-armed="false"] .auth-otp__cell {
+  box-shadow: inset 0 0 0 1px var(--color-line);
+}
+
+.auth-otp[data-armed="false"] .auth-otp__cell:hover {
+  box-shadow: inset 0 0 0 1px var(--color-line-strong);
+}
+
+/* ── Password strength ── */
+.auth-meter {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+}
+
+.auth-meter__seg {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--color-line);
+  transition: background-color 0.3s var(--ease-out);
+}
+
+.auth-meter[data-score="1"] .auth-meter__seg:nth-child(-n + 1),
+.auth-meter[data-score="2"] .auth-meter__seg:nth-child(-n + 2) {
+  background: #d94a4a;
+}
+
+.auth-meter[data-score="3"] .auth-meter__seg:nth-child(-n + 3) {
+  background: #e8993e;
+}
+
+.auth-meter[data-score="4"] .auth-meter__seg:nth-child(-n + 4) {
+  background: #22a67e;
+}
+
+.auth-meter__text {
+  margin: 0.375rem 0 0;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--color-ink-3);
+}
+
+/* ── Select ── */
+.auth-select {
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.75rem 2.5rem 0.75rem 0.875rem;
+  border: 0;
+  border-radius: 0.875rem;
+  font: inherit;
+  font-size: 0.9375rem;
+  color: var(--color-ink);
+  background-color: #fff;
+  box-shadow: inset 0 0 0 1px var(--color-line);
+  /* Inline chevron: no extra DOM node, and the native arrow is not drawn on the
+     same surface in every engine. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9a9a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.875rem center;
+  background-size: 1rem;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: box-shadow 0.18s var(--ease-out);
+}
+
+.auth-select:hover {
+  box-shadow: inset 0 0 0 1px var(--color-line-strong);
+}
+
+.auth-select:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px #c63a22, 0 0 0 4px color-mix(in oklab, #c63a22 13%, transparent);
+}
+
+/* ── Divider ── */
+.auth-rule {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  margin-block: 1.25rem;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+
+.auth-rule::before,
+.auth-rule::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--color-line), transparent);
+}
+
+/* ── Form footer ── */
+.auth-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--color-ink-2);
+  text-wrap: pretty;
+}
+
+.auth-trust {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4375rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--color-ink-3);
+  text-wrap: pretty;
+}
+
+.auth-trust svg {
+  flex: 0 0 auto;
+  width: 0.8125rem;
+  height: 0.8125rem;
+  stroke-width: 2;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   PINWHEEL — the brand-panel motif
+   ════════════════════════════════════════════════════════════════════════════
+
+   Four oversized squares, each rotated 45 degrees about `0 50%`. Because the
+   pivot is the square's *left-middle* — which sits exactly on the panel centre —
+   every square contributes one edge that passes through the centre, and the four
+   of them tile the panel into wedges. That is the pinwheel.
+
+   The previous implementation put the rotation on a `::before`/`::after` that
+   filled the same box, so the pseudo-elements rotated about *their own* centre
+   (one full panel-width away from the intended pivot). Four concentric diamonds
+   do not tile, so the pinwheel never actually formed. The rotation below is on
+   the coloured element itself, with the origin stated explicitly.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.pinwheel {
+  position: absolute;
+  /* Centre of the panel, expressed against its own size so it is correct at any
+     aspect ratio — unlike a `50% 50%` of a 200vmax child. */
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.pinwheel__panel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 200vmax;
+  height: 200vmax;
+  /* Pull the box back so its left-middle lands on the pivot at (0, 0). */
+  margin: -100vmax 0 0 0;
+  transform-origin: 0 50%;
+  /* Only the open/close transition runs, and only while the panel is interacted
+     with. At rest this is a static four-colour wedge — no per-frame paint. */
+  transition: transform 0.75s var(--ease-inout);
+  will-change: transform;
+}
+
+.pinwheel__panel::before,
+.pinwheel__panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  display: block;
+  transform-origin: 0 50%;
+  transition: transform 0.75s var(--ease-inout);
+  will-change: transform;
+}
+
+.pinwheel__panel::before {
+  background: linear-gradient(135deg, #e46569 0%, #d9556a 100%);
+  transform: rotate(45deg) translate3d(0, 0, 0);
+}
+
+.pinwheel__panel::after {
+  background: linear-gradient(225deg, #ecaf81 0%, #e08a5c 100%);
+  transform: rotate(135deg) translate3d(0, 0, 0);
+}
+
+.pinwheel__panel--b::before {
+  background: linear-gradient(135deg, #60b8d4 0%, #4a9ec4 100%);
+  transform: rotate(-45deg) translate3d(0, 0, 0);
+}
+
+.pinwheel__panel--b::after {
+  background: linear-gradient(225deg, #3745b5 0%, #2c38a0 100%);
+  transform: rotate(-135deg) translate3d(0, 0, 0);
+}
+
+/* Open state: the wedges retract along their own local X, which is the outward
+   diagonal, revealing the stage behind. Applied on hover *and* keyboard focus so
+   the effect is not mouse-only. One knob (`--cs-open`) is flipped on the panel
+   rather than on the four pseudos, so the distance is tuned in a single place. */
+.auth__brand {
+  --cs-open: 0px;
+}
+
+.auth__brand:hover,
+.auth__brand:focus-within,
+.auth__brand[data-open="true"] {
+  --cs-open: 18vmax;
+}
+
+.auth__brand:hover .pinwheel__panel::before,
+.auth__brand:focus-within .pinwheel__panel::before,
+.auth__brand[data-open="true"] .pinwheel__panel::before {
+  transform: rotate(45deg) translate3d(var(--cs-open), 0, 0);
+}
+
+.auth__brand:hover .pinwheel__panel::after,
+.auth__brand:focus-within .pinwheel__panel::after,
+.auth__brand[data-open="true"] .pinwheel__panel::after {
+  transform: rotate(135deg) translate3d(calc(var(--cs-open) * -1), 0, 0);
+}
+
+.auth__brand:hover .pinwheel__panel--b::before,
+.auth__brand:focus-within .pinwheel__panel--b::before,
+.auth__brand[data-open="true"] .pinwheel__panel--b::before {
+  transform: rotate(-45deg) translate3d(calc(var(--cs-open) * -1), 0, 0);
+}
+
+.auth__brand:hover .pinwheel__panel--b::after,
+.auth__brand:focus-within .pinwheel__panel--b::after,
+.auth__brand[data-open="true"] .pinwheel__panel--b::after {
+  transform: rotate(-135deg) translate3d(var(--cs-open), 0, 0);
+}
+
+/* The wedge distance is a viewport unit, which is wrong on a very wide panel
+   (the retreat grows with the window, not with the panel). From `lg` the panel is
+   a fixed-height grid track, so its own smaller dimension is a usable proxy and
+   the gap stays a gap at any window shape. Below `lg` the panel is a
+   content-sized band, and `container-type: size` there would suppress the very
+   content that gives the band its height — so the vmax value stands. */
+@supports (width: 1cqh) {
+  @media (min-width: 1024px) {
+    .auth__brand {
+      container-type: size;
+      container-name: brand;
+    }
+
+    .auth__brand:hover,
+    .auth__brand:focus-within,
+    .auth__brand[data-open="true"] {
+      --cs-open: clamp(6rem, 26cqmin, 18rem);
+    }
+  }
+}
+
+/* ── Aurora: the only idle animation, and it is a transform, not a repaint ── */
+.aurora {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 1;
+  width: 160vmax;
+  height: 160vmax;
+  margin: -80vmax 0 0 -80vmax;
+  background: conic-gradient(
+    from 0deg,
+    rgba(228, 101, 105, 0.5) 0deg,
+    rgba(236, 175, 129, 0.42) 90deg,
+    rgba(96, 184, 212, 0.4) 180deg,
+    rgba(55, 69, 181, 0.5) 270deg,
+    rgba(228, 101, 105, 0.5) 360deg
+  );
+  filter: blur(70px);
+  opacity: 0.5;
+  transform: rotate(0deg);
+  animation: cs-aurora 90s linear infinite;
+  pointer-events: none;
+  contain: paint;
+  will-change: transform;
+}
+
+@keyframes cs-aurora {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Grain: kills the banding a wide blurred gradient shows on 8-bit panels ── */
+.grain {
+  position: absolute;
+  inset: -50%;
+  z-index: 2;
+  opacity: 0.16;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+/* ── Vignette: pulls focus to the copy, hides the panel seams ── */
+.vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 22% 42%, transparent 0%, transparent 45%, rgba(11, 13, 18, 0.55) 100%),
+    linear-gradient(to right, rgba(11, 13, 18, 0.55) 0%, transparent 45%),
+    linear-gradient(to bottom, rgba(11, 13, 18, 0.35) 0%, transparent 30%);
+}
+
+/* The vignette is tuned for the desktop panel, where the copy sits left of
+   centre. On the mobile band the copy is left-aligned at the bottom, so the
+   right-hand falloff is dropped and a bottom scrim is added to keep the
+   headline legible where the aurora is brightest. */
+@media (max-width: 1023px) {
+  .vignette {
+    background:
+      linear-gradient(to top, rgba(11, 13, 18, 0.72) 0%, rgba(11, 13, 18, 0.2) 55%, transparent 100%),
+      radial-gradient(130% 100% at 20% 20%, transparent 0%, rgba(11, 13, 18, 0.5) 100%);
+  }
+}
+
+/* ── Pinwheel toggle ──
+   A coarse pointer never fires `:hover`, so the open state is unreachable on a
+   tablet — which is the primary device for this app. Rather than drive the whole
+   brand panel with a JS media query, the open state is a single attribute
+   (`.auth__brand[data-open]`) and this button is the one control that sets it.
+   It is also the keyboard route to the same state, and it lives in the brand
+   foot so it reads as part of the composition, not as chrome. */
+.auth-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 1.75rem;
+  padding-inline: 0.5rem;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--color-stage-ink-2);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  transition: color 0.18s var(--ease-out), background-color 0.18s var(--ease-out);
+}
+
+.auth-toggle:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.auth-toggle[aria-pressed="true"] {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
+
+.auth-toggle svg {
+  width: 0.8125rem;
+  height: 0.8125rem;
+  stroke-width: 2;
+}
+
+/* Pushed to the outer edge of the brand foot, so the two trust marks read as a
+   left-aligned group and the control has a predictable home. */
+.auth-toggle--edge {
+  margin-left: auto;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   REDUCED MOTION / CONTRAST / FALLBACKS
+   ════════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  .pinwheel__panel,
+  .pinwheel__panel::before,
+  .pinwheel__panel::after,
+  .aurora {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  .aurora {
+    transform: none !important;
+  }
+
+  .auth-btn:hover:not(:disabled) {
+    transform: none;
+  }
+
+  .auth-btn:hover:not(:disabled)::after {
+    animation: none;
+    display: none;
+  }
+
+  .auth__form-inner {
+    animation: none;
+  }
+
+  .nav-link,
+  .nav-btn,
+  .nav-emergency,
+  .cmdk__item,
+  .drawer__link {
+    transition-duration: 0.01ms;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* `backdrop-filter` is progressive: without it the bar and drawers stay fully
+   opaque rather than becoming unreadable. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .drawer {
+    background: #fff;
+  }
+
+  .nav-solid {
+    background: #fff;
+  }
+
+  .cmdk-scrim {
+    background: rgba(23, 19, 15, 0.55);
+  }
+
+  .auth__eyebrow {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .nav-shell[data-solid="true"] {
+    background: #fff;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .nav-link,
+  .nav-btn {
+    color: var(--color-ink);
+  }
+
+  .auth-field {
+    box-shadow: inset 0 0 0 1.5px var(--color-ink-2);
+  }
+
+  .auth-alert {
+    box-shadow: inset 0 0 0 1.5px currentColor;
+  }
+}
+
+/* Coarse pointers never get hover, so the icon rail and the pinwheel's open
+   state are driven by `:hover` states that will never fire. Opt those users into
+   the compact, label-free presentation via a media query rather than JS. */
+@media (hover: none) {
+  .nav-tip::after {
+    display: none;
+  }
+
+  .nav-indicator {
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, #c63a22 30%, transparent);
+  }
+}
+
+/* Firefox and older WebKit do not support `:focus-within` on all elements the
+   same way, but the outline fallback keeps keyboard focus visible regardless. */
+@supports not selector(:focus-within) {
+  .auth-field:focus-within {
+    box-shadow: inset 0 0 0 1.5px #c63a22;
+  }
+}
+
+

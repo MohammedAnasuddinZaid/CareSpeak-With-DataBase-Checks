@@ -73,7 +73,7 @@ export default function DemoModeControls({ onSimulateGesture, gestureType }: Dem
     <div>
       <button
         onClick={() => setActive(!active)}
-        className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+        className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
           active
             ? "bg-[#c63a22]/10 text-[#c63a22] border border-[#c63a22]/20"
             : "btn-secondary"
@@ -105,7 +105,7 @@ export default function DemoModeControls({ onSimulateGesture, gestureType }: Dem
               {/* ── one-click judge scenario ── */}
               <button
                 onClick={running ? stopScenario : runScenario}
-                className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all mb-3 ${
+                className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors mb-3 ${
                   running
                     ? "bg-[#fef2f2] text-[#d94a4a] border border-[#fecaca]"
                     : "bg-[#c63a22] text-white hover:bg-[#a83220]"
@@ -135,7 +135,7 @@ export default function DemoModeControls({ onSimulateGesture, gestureType }: Dem
                       key={btn.gesture}
                       onClick={() => onSimulateGesture(btn.gesture)}
                       disabled={running}
-                      className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium transition-all disabled:opacity-40 ${btn.color}`}
+                      className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-40 ${btn.color}`}
                     >
                       <Icon className="w-4 h-4" />
                       {btn.label}

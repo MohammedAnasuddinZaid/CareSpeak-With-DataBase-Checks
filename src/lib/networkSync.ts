@@ -22,8 +22,34 @@ const SSE_GRACE_MS = 6000;
  *  instances, so SSE alone can miss writes unless Upstash Redis is configured. */
 const RECONCILE_INTERVAL_MS = 2000;
 
-export type ConnStatus = "connected" | "reconnecting" | "disconnected";
+/**
+ * `denied` is a terminal state, not a retry state. It means the console could
+ * not be paired with this bed and is not signed in as staff, so no amount of
+ * reconnecting will help -- the UI must offer re-pairing instead of a spinner.
+ */
+export type ConnStatus = "connected" | "reconnecting" | "disconnected" | "denied";
 export type Transport = "sse" | "poll" | "offline" | "none";
+
+/**
+ * Wording for the nurse-link badge, shared so every surface tells the patient
+ * the same thing.
+ *
+ * The distinction that matters is `denied` vs `disconnected`. Both mean "not
+ * connected", but only one of them resolves itself; telling an unpaired patient
+ * "offline" invites them to wait forever for a link that is never coming.
+ */
+export function linkStatusLabel(status: ConnStatus, transport: Transport): string {
+  switch (status) {
+    case "connected":
+      return `Nurse link · ${transport.toUpperCase()}`;
+    case "reconnecting":
+      return "Reconnecting…";
+    case "denied":
+      return "Bed not paired — ask a nurse to help";
+    default:
+      return "Nurse link offline";
+  }
+}
 
 type StoredEntry = GestureLogEntry & { status?: string };
 

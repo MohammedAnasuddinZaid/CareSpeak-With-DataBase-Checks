@@ -4,3 +4,16 @@ out/
 *.tsbuildinfo
 next-env.d.ts
 .DS_Store
+
+# Secrets. .env.example is committed as documentation; every real .env* is not.
+.env
+.env.*
+!.env.example
+
+# Scratch files from manual API testing. These hold live session cookies and
+# request/response bodies, so they must never be committed by accident.
+.cookies*.txt
+req-*.json
+.devserver.log
+.devserver.err
+.probe*

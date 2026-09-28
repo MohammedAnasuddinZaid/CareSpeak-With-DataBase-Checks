@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Eye, RotateCcw, Camera, StopCircle, Pause, ArrowLeft, ArrowRight,
+  RotateCcw, Camera, StopCircle, Pause, ArrowLeft, ArrowRight,
   HelpCircle, Droplets, Sparkles, Activity, Fingerprint, Volume2,
 } from "lucide-react";
 import { useEyeGesture } from "@/hooks/useEyeGesture";
@@ -16,8 +16,11 @@ import { addGestureLog } from "@/lib/gestureLog";
 import QRPairingDisplay from "@/components/QRPairingDisplay";
 import CompanionMessageInput from "@/components/CompanionMessageInput";
 import DemoModeControls from "@/components/DemoModeControls";
+import ModeSwitcher from "@/components/ModeSwitcher";
+import MyHistoryPanel from "@/components/MyHistoryPanel";
 import PatientMetricsCard from "@/components/PatientMetricsCard";
 import NurseReplyBanner from "@/components/NurseReplyBanner";
+import { linkStatusLabel } from "@/lib/networkSync";
 import PainScaleOverlay from "@/components/PainScaleOverlay";
 
 const GESTURE_GUIDE = [
@@ -111,12 +114,12 @@ export default function EyeModePage() {
     <div className="min-h-screen pt-20 pb-16">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
+          {/* The input-method toggle sits here, above the heading, because it is a
+              property of this workspace rather than a destination. It replaced two
+              slots in the global site bar. */}
+          <ModeSwitcher className="mb-5" />
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div>
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#c63a22]/5 border border-[#c63a22]/15 text-[#c63a22] text-sm font-medium mb-4">
-                <Eye className="w-4 h-4" />
-                Eye Gesture Mode
-              </div>
               <h1 className="text-3xl sm:text-4xl font-bold text-[#1f1f1f] tracking-tight">Eye Tracking Dashboard</h1>
               <p className="mt-2 text-[#6e6e6e]">
                 Look left/right, blink twice for HELP, or open your mouth — no hand movement needed.
@@ -204,7 +207,7 @@ export default function EyeModePage() {
               )}
               {cameraOn && (
                 <div className={`absolute top-4 right-4 px-3 py-1.5 rounded-xl text-xs font-medium shadow-sm ${status === "connected" ? "bg-[#ecfdf5]/95 text-[#22a67e]" : "bg-white/90 text-[#9ca3af]"}`}>
-                  {status === "connected" ? `Nurse link · ${transport.toUpperCase()}` : "Nurse link offline"}
+                  {linkStatusLabel(status, transport)}
                 </div>
               )}
             </div>
@@ -259,7 +262,7 @@ export default function EyeModePage() {
                   const isPauseItem = g.pause;
                   return (
                     <div key={g.label}
-                      className={`flex items-center justify-between p-2.5 rounded-xl transition-all duration-200 ${
+                      className={`flex items-center justify-between p-2.5 rounded-xl transition-colors duration-200 ${
                         isPauseItem
                           ? isPaused ? "bg-[#fffbeb] border border-[#fde68a]" : "hover:bg-[#f5f3f0] border border-transparent"
                           : isActive ? "bg-[#22a67e]/5 border border-[#22a67e]/15" : "hover:bg-[#f5f3f0] border border-transparent"
@@ -277,9 +280,11 @@ export default function EyeModePage() {
               </div>
             </div>
 
+            <MyHistoryPanel />
+
             <button onClick={() => gesture && voiceAlert.speak(gesture, "eye")} disabled={!gesture}
               aria-label="Replay last alert"
-              className={`w-full py-3.5 rounded-2xl transition-all duration-200 text-sm font-medium flex items-center justify-center gap-2 ${
+              className={`w-full py-3.5 rounded-2xl transition-[color,background-color,border-color,box-shadow,transform] duration-200 text-sm font-medium flex items-center justify-center gap-2 ${
                 gesture ? "card hover:bg-[#f5f3f0] text-[#1f1f1f]" : "bg-[#f5f3f0] text-[#6e6e6e] border border-[#ececec] cursor-not-allowed"
               }`}>
               <RotateCcw className="w-4 h-4" /> Replay Last Alert <Volume2 className="w-4 h-4 opacity-50" />

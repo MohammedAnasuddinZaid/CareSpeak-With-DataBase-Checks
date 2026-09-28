@@ -115,3 +115,78 @@ export function getNurseDashboardUrl(sessionId: string): string {
   if (typeof window === "undefined") return "";
   return `${getDashboardOrigin()}/nurse-view?session=${sessionId}`;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Console credential                                                          */
+/* -------------------------------------------------------------------------- */
+
+export type ClaimState = "idle" | "claiming" | "granted" | "denied" | "error";
+
+/**
+ * Ask the server to provision this browser as the console for `sessionId`.
+ *
+ * The session code in the bed's QR is a public handle; the credential that
+ * actually authorises reads is a separate token the server sets as an HttpOnly
+ * cookie. Because it is HttpOnly, nothing in this file ever sees it — there is no
+ * token in localStorage to leak through an XSS bug, and no client code that
+ * could forget to attach it.
+ *
+ * Safe to call on every mount: the server only mints a token for a session that
+ * does not exist yet, and a repeat call from a browser that already holds the
+ * valid token is a no-op. The `409` therefore means "this bed belongs to a
+ * different browser", which is a re-pairing problem for staff to solve — not
+ * something a patient can click past.
+ */
+export async function claimConsoleToken(sessionId: string): Promise<ClaimState> {
+  if (typeof window === "undefined") return "idle";
+  try {
+    const res = await fetch("/api/console/claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session: sessionId }),
+      cache: "no-store",
+    });
+    if (res.ok) return "granted";
+    if (res.status === 409 || res.status === 403) return "denied";
+    return "error";
+  } catch {
+    return "error";
+  }
+}
+
+/** Whether this browser currently holds a console credential for `sessionId`. */
+export async function hasConsoleToken(sessionId: string): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  try {
+    const res = await fetch(
+      `/api/console/claim?session=${encodeURIComponent(sessionId)}`,
+      { cache: "no-store" },
+    );
+    if (!res.ok) return false;
+    return Boolean((await res.json())?.authorized);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether this browser is signed in as a member of staff.
+ *
+ * Used to tell the two reasons a console claim can be denied apart: a nurse
+ * opening a bed they are assigned to is expected to be denied a *console
+ * credential* and still allowed to read, whereas a random kiosk that is not
+ * signed in is not allowed anything. Without this distinction the hook either
+ * locks nurses out or waves unpaired devices through.
+ */
+export async function hasStaffSession(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  try {
+    const res = await fetch("/api/auth/session", { cache: "no-store" });
+    if (!res.ok) return false;
+    const body = (await res.json()) as { user?: { role?: string } | null } | null;
+    const role = body?.user?.role;
+    return role === "nurse" || role === "doctor" || role === "admin";
+  } catch {
+    return false;
+  }
+}

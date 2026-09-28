@@ -174,7 +174,7 @@ export default function LogsPage() {
         <div className="flex items-center gap-1 mb-6 border-b border-[#ececec]">
           {(["timeline", "analytics"] as const).map((t) => (
             <button key={t} onClick={() => setTab(t)} aria-pressed={tab === t}
-              className={`px-5 py-3 text-sm font-medium transition-all border-b-2 -mb-[1px] ${tab === t ? "text-[#c63a22] border-[#c63a22]" : "text-[#6e6e6e] border-transparent hover:text-[#1f1f1f]"}`}>
+              className={`px-5 py-3 text-sm font-medium transition-colors border-b-2 -mb-[1px] ${tab === t ? "text-[#c63a22] border-[#c63a22]" : "text-[#6e6e6e] border-transparent hover:text-[#1f1f1f]"}`}>
               {t === "timeline" ? <Clock className="w-4 h-4 inline mr-1.5" /> : <BarChart3 className="w-4 h-4 inline mr-1.5" />}
               {t === "timeline" ? "Timeline" : "Analytics"}
             </button>
@@ -190,7 +190,7 @@ export default function LogsPage() {
                   <div className="flex gap-1">
                     {[7, 14, 30].map((d) => (
                       <button key={d} onClick={() => setChartDays(d)} aria-pressed={chartDays === d}
-                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${chartDays === d ? "bg-[#c63a22]/10 text-[#c63a22]" : "text-[#6e6e6e] hover:bg-[#f5f3f0]"}`}>{d}d</button>
+                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${chartDays === d ? "bg-[#c63a22]/10 text-[#c63a22]" : "text-[#6e6e6e] hover:bg-[#f5f3f0]"}`}>{d}d</button>
                     ))}
                   </div>
                 </div>
@@ -272,7 +272,7 @@ export default function LogsPage() {
                 <Filter className="w-4 h-4 text-[#6e6e6e]" />
                 {(["all", "hand", "eye"] as const).map((f) => (
                   <button key={f} onClick={() => setFilter(f)} aria-pressed={filter === f}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${filter === f ? "bg-[#c63a22]/10 text-[#c63a22] border border-[#c63a22]/20" : "text-[#6e6e6e] hover:text-[#1f1f1f] border border-transparent"}`}>
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors duration-200 ${filter === f ? "bg-[#c63a22]/10 text-[#c63a22] border border-[#c63a22]/20" : "text-[#6e6e6e] hover:text-[#1f1f1f] border border-transparent"}`}>
                     {f === "all" ? "All" : f === "hand" ? "Hand" : "Eye"}
                   </button>
                 ))}
@@ -313,7 +313,7 @@ export default function LogsPage() {
                           </div>
                           <button onClick={() => voiceAlert.replay(entry.gesture, entry.language as SupportedLanguage)}
                             aria-label="Replay spoken alert"
-                            className="p-2 rounded-lg bg-[#f5f3f0] hover:bg-[#ececec] text-[#6e6e6e] transition-all duration-200">
+                            className="p-2 rounded-lg bg-[#f5f3f0] hover:bg-[#ececec] text-[#6e6e6e] transition-colors duration-200">
                             <Volume2 className="w-4 h-4" />
                           </button>
                         </motion.div>

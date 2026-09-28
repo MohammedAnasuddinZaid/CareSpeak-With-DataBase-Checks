@@ -7,6 +7,7 @@ import { Camera, Wifi, WifiOff, Eye, Hand, Maximize2, Play, Smartphone, HelpCirc
 import { useCctvFeed } from "@/hooks/useCctvFeed";
 import { useLiveSync } from "@/hooks/useLiveSync";
 import { getOrCreateSession } from "@/lib/session";
+import { linkStatusLabel } from "@/lib/networkSync";
 import type { GestureLogEntry } from "@/types";
 
 const EXAMPLES = [
@@ -52,13 +53,13 @@ function CctvSetup({ onStart }: { onStart: (url: string, mode: "hand" | "eye") =
             <label className="text-xs font-semibold text-[#1f1f1f] uppercase tracking-widest mb-3 block">Detection Mode</label>
             <div className="grid grid-cols-2 gap-3">
               <button onClick={() => setMode("hand")} aria-pressed={mode === "hand"}
-                className={`p-4 rounded-xl border-2 transition-all duration-200 text-center ${mode === "hand" ? "border-[#c63a22] bg-[#c63a22]/5" : "border-[#ececec] hover:border-[#d5d5d5]"}`}>
+                className={`p-4 rounded-xl border-2 transition-colors duration-200 text-center ${mode === "hand" ? "border-[#c63a22] bg-[#c63a22]/5" : "border-[#ececec] hover:border-[#d5d5d5]"}`}>
                 <Hand className={`w-6 h-6 mx-auto mb-1 ${mode === "hand" ? "text-[#c63a22]" : "text-[#6e6e6e]"}`} />
                 <div className={`text-sm font-bold ${mode === "hand" ? "text-[#c63a22]" : "text-[#1f1f1f]"}`}>Hand Mode</div>
                 <div className="text-xs text-[#6e6e6e] mt-0.5">Thumbs up/down, HELP, WATER</div>
               </button>
               <button onClick={() => setMode("eye")} aria-pressed={mode === "eye"}
-                className={`p-4 rounded-xl border-2 transition-all duration-200 text-center ${mode === "eye" ? "border-[#22a67e] bg-[#22a67e]/5" : "border-[#ececec] hover:border-[#d5d5d5]"}`}>
+                className={`p-4 rounded-xl border-2 transition-colors duration-200 text-center ${mode === "eye" ? "border-[#22a67e] bg-[#22a67e]/5" : "border-[#ececec] hover:border-[#d5d5d5]"}`}>
                 <Eye className={`w-6 h-6 mx-auto mb-1 ${mode === "eye" ? "text-[#22a67e]" : "text-[#6e6e6e]"}`} />
                 <div className={`text-sm font-bold ${mode === "eye" ? "text-[#22a67e]" : "text-[#1f1f1f]"}`}>Eye Mode</div>
                 <div className="text-xs text-[#6e6e6e] mt-0.5">Gaze, blink, mouth gestures</div>
@@ -86,11 +87,11 @@ function CctvSetup({ onStart }: { onStart: (url: string, mode: "hand" | "eye") =
 
           <div className="flex gap-3">
             <button onClick={handleTest} disabled={!url.trim() || testing}
-              className={`flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-all border ${url.trim() && !testing ? "border-[#ececec] text-[#6e6e6e] hover:bg-[#f5f3f0]" : "border-[#f5f3f0] text-[#d5d5d5] cursor-not-allowed"}`}>
+              className={`flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium transition-colors border ${url.trim() && !testing ? "border-[#ececec] text-[#6e6e6e] hover:bg-[#f5f3f0]" : "border-[#f5f3f0] text-[#d5d5d5] cursor-not-allowed"}`}>
               <RefreshCw className={`w-4 h-4 ${testing ? "animate-spin" : ""}`} /> Test
             </button>
             <button onClick={() => onStart(url.trim(), mode)} disabled={!url.trim()}
-              className={`flex-1 py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all duration-200 ${url.trim() ? "bg-[#c63a22] text-white shadow-lg shadow-[#c63a22]/25 hover:shadow-xl hover:translate-y-[-1px]" : "bg-[#f5f3f0] text-[#6e6e6e] cursor-not-allowed"}`}>
+              className={`flex-1 py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-[color,background-color,box-shadow,transform] duration-200 ${url.trim() ? "bg-[#c63a22] text-white shadow-lg shadow-[#c63a22]/25 hover:shadow-xl hover:translate-y-[-1px]" : "bg-[#f5f3f0] text-[#6e6e6e] cursor-not-allowed"}`}>
               <Play className="w-4 h-4" /> Start Monitoring
             </button>
           </div>
@@ -156,7 +157,7 @@ function CctvMonitor({ feedUrl, mode: initialMode }: { feedUrl: string; mode: "h
   const [detectionMode, setDetectionMode] = useState<"hand" | "eye">(initialMode);
   void setDetectionMode; // mode switching kept for future in-monitor toggle
 
-  const { sendAlert, status, latestReply } = useLiveSync({ sessionId });
+  const { sendAlert, status, transport, latestReply } = useLiveSync({ sessionId });
 
   // useCctvFeed persists + speaks the gesture internally; we fan it out here.
   const onGesture = useCallback((entry: GestureLogEntry) => sendAlert(entry), [sendAlert]);
@@ -257,8 +258,8 @@ function CctvMonitor({ feedUrl, mode: initialMode }: { feedUrl: string; mode: "h
           <div className="flex items-center gap-3">
             {patientMetrics.movementActivity !== undefined && <span>Motion {Math.round((patientMetrics.movementActivity ?? 0) * 100)}%</span>}
             {fps > 0 && <span>{fps} FPS</span>}
-            <span className={status === "connected" ? "text-[#22a67e]" : "text-white/40"}>
-              Nurse link {status === "connected" ? "live" : "offline"}
+            <span className={status === "connected" ? "text-[#22a67e]" : status === "denied" ? "text-[#e8993e]" : "text-white/40"}>
+              {linkStatusLabel(status, transport)}
             </span>
           </div>
         </div>

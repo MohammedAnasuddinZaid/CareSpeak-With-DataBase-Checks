@@ -209,7 +209,7 @@ export default function QRPairingDisplay({ sessionId, compact = false }: QRPairi
           </div>
           <button
             onClick={handleCopy}
-            className="p-2.5 rounded-xl bg-[#c63a22]/10 hover:bg-[#c63a22]/20 text-[#c63a22] transition-all shrink-0"
+            className="p-2.5 rounded-xl bg-[#c63a22]/10 hover:bg-[#c63a22]/20 text-[#c63a22] transition-colors shrink-0"
             aria-label="Copy dashboard URL"
           >
             {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}

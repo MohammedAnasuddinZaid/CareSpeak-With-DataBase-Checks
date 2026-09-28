@@ -88,7 +88,7 @@ export default function EmergencyPage() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               aria-label="Activate emergency alert"
-              className="w-64 h-64 rounded-full bg-[#d94a4a] text-white font-bold text-2xl shadow-2xl shadow-[#d94a4a]/30 hover:shadow-[#d94a4a]/50 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 flex flex-col items-center justify-center gap-3 alert-pulse mx-auto"
+              className="w-64 h-64 rounded-full bg-[#d94a4a] text-white font-bold text-2xl shadow-2xl shadow-[#d94a4a]/30 hover:shadow-[#d94a4a]/50 hover:scale-[1.02] active:scale-[0.98] transition-[box-shadow,transform] duration-200 flex flex-col items-center justify-center gap-3 alert-pulse mx-auto"
             >
               <AlertTriangle className="w-12 h-12" />
               <span>TAP FOR</span>
@@ -102,11 +102,20 @@ export default function EmergencyPage() {
               <div className="space-y-2">
                 <p className="text-lg font-semibold text-[#d94a4a]">EMERGENCY ACTIVE</p>
                 {dispatched && (
-                  <p className={`text-sm flex items-center justify-center gap-1.5 ${status === "connected" ? "text-[#22a67e]" : "text-[#e8993e]"}`}>
+                  <p className={`text-sm flex items-center justify-center gap-1.5 ${
+                    status === "connected" ? "text-[#22a67e]" : status === "denied" ? "text-[#d94a4a]" : "text-[#e8993e]"
+                  }`}>
                     <CheckCircle2 className="w-4 h-4" />
                     {status === "connected"
                       ? "Sent to nurse console — they hear the alarm"
-                      : "Offline — alert is queued and will send automatically"}
+                      : status === "denied"
+                        // Never promise delivery we cannot perform. A patient
+                        // pressing this button and being told it "will send
+                        // automatically" is the worst possible failure mode, so
+                        // say plainly that the bed is not connected and give
+                        // them the thing that still works.
+                        ? "This bed is not connected to the nurse console. Use the call bell or alert a nurse directly — do not wait for this alert."
+                        : "Offline — alert is queued and will send automatically"}
                   </p>
                 )}
               </div>

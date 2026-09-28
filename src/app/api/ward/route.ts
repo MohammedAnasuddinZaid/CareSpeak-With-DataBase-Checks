@@ -1,77 +1,35 @@
 import { NextResponse } from "next/server";
-import { getSessionStore } from "@/lib/server/store";
-import { getPairSummary } from "@/lib/server/pairing";
+import { wardSnapshot } from "@/lib/server/clinical";
+import { requireStaff } from "@/lib/server/auth";
+import { handleError } from "@/lib/server/http";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 /**
- * Multi-patient ward overview.
- * GET /api/ward -> recently-active sessions with compact summaries so a single
- * nurse can monitor an entire ward from one screen. Includes per-bed QR pairing
- * telemetry (linked devices, last scan IP/time). Pairs with /ward (UI).
+ * Multi-patient ward overview — the single widest read in the product.
+ *
+ * One call returns every live bed with its last gesture, heart rate, SpO₂, SOS
+ * state, unacknowledged count, and the IP of the last pairing scan. Anonymous,
+ * that hands a stranger the entire ward, so it requires a clinical account.
+ *
+ * Now backed by MySQL rather than the process-local store, which means the board
+ * survives a restart, is correct across multiple server instances, and can be
+ * scoped: a nurse sees the beds of patients they are actively assigned to, while
+ * an admin sees everything. The previous version was one blanket staff check that
+ * ignored assignment entirely.
  */
 export async function GET(): Promise<NextResponse> {
-  const store = await getSessionStore();
-  const sessions = await store.getActiveSessions();
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const freshCutoff = Date.now() - 2 * 60 * 60 * 1000; // registry TTL parity
+  let user;
+  try {
+    user = await requireStaff();
+  } catch (err) {
+    return handleError(err);
+  }
 
-  const rows = await Promise.all(
-    sessions
-      .filter((s) => s.lastSeen >= freshCutoff)
-      .slice(0, 50)
-      .map(async ({ session, lastSeen }) => {
-        try {
-          const [entries, metrics, vitals] = await Promise.all([
-            store.getEntriesSince(session, cutoff),
-            store.getMetrics(session),
-            store.getVitals(session),
-          ]);
-          let last = entries[0] ?? null;
-          for (const e of entries) {
-            if ((e.serverTime ?? e.timestamp) > (last?.serverTime ?? last?.timestamp ?? 0)) last = e;
-          }
-          const todayStart = new Date();
-          todayStart.setHours(0, 0, 0, 0);
-          const pairing = getPairSummary(session);
-          return {
-            session,
-            lastSeen,
-            lastGesture: last?.gesture ?? null,
-            lastAt: last ? (last.serverTime ?? last.timestamp) : null,
-            unacknowledged: entries.filter((e) => e.status === "none").length,
-            escalated: entries.filter((e) => e.status === "escalate").length,
-            today: entries.filter((e) => (e.serverTime ?? e.timestamp) >= todayStart.getTime()).length,
-            alertness: Object.values(metrics)[0]?.alertnessScore ?? null,
-            movement: Object.values(metrics)[0]?.movementActivity ?? null,
-            heartRate: Object.values(vitals)[0]?.heartRate ?? null,
-            spo2: Object.values(vitals)[0]?.spo2 ?? null,
-            sosActive: !!Object.values(vitals)[0]?.sosActive,
-            linkedDevices: pairing.linkedDevices,
-            lastScanAt: pairing.lastScanAt,
-            lastScanIp: pairing.lastScanIp,
-          };
-        } catch {
-          return {
-            session,
-            lastSeen,
-            lastGesture: null as string | null,
-            lastAt: null as number | null,
-            unacknowledged: 0,
-            escalated: 0,
-            today: 0,
-            alertness: null as number | null,
-            movement: null as number | null,
-            heartRate: null as number | null,
-            spo2: null as number | null,
-            sosActive: false,
-            linkedDevices: 0,
-            lastScanAt: null as number | null,
-            lastScanIp: null as string | null,
-          };
-        }
-      })
+  const sessions = await wardSnapshot(user);
+  return NextResponse.json(
+    { sessions, serverTime: Date.now(), driver: "mysql" as const },
+    { headers: { "Cache-Control": "no-store" } },
   );
-
-  return NextResponse.json({ sessions: rows, serverTime: Date.now() }, { headers: { "Cache-Control": "no-store" } });
 }

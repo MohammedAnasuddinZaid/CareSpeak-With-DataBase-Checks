@@ -7,6 +7,7 @@ import {
   ConnStatus,
   Transport,
 } from "@/lib/networkSync";
+import { claimConsoleToken, hasStaffSession, type ClaimState } from "@/lib/session";
 import {
   DeviceVitals,
   GestureLogEntry,
@@ -28,11 +29,19 @@ export interface LiveSyncApi {
   syncRef: React.MutableRefObject<NetworkSync | null>;
   status: ConnStatus;
   transport: Transport;
-  /** Server-side store backend reported by the API: "memory" | "redis". */
-  driver: "memory" | "redis" | null;
+  /** Server-side store backend reported by the API. */
+  driver: "memory" | "redis" | "mysql" | null;
   remoteMetrics: Record<string, PatientMetrics>;
   vitals: Record<string, DeviceVitals>;
   latestReply: NurseReply | null;
+  /**
+   * Whether this browser holds the console credential for the bed.
+   *
+   * The sync connection is not opened until this resolves, because the server now
+   * refuses an unauthorised read — opening first produced a socket that 401'd and
+   * then sat in a reconnect loop the patient could do nothing about.
+   */
+  claim: ClaimState;
   sendAlert: (entry: GestureLogEntry) => void;
   sendAction: (action: import("@/types").AlertAction) => void;
   sendReply: (text: string, from?: string) => void;
@@ -48,10 +57,11 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
 
   const [status, setStatus] = useState<ConnStatus>("disconnected");
   const [transport, setTransport] = useState<Transport>("none");
-  const [driver, setDriver] = useState<"memory" | "redis" | null>(null);
+  const [driver, setDriver] = useState<"memory" | "redis" | "mysql" | null>(null);
   const [remoteMetrics, setRemoteMetrics] = useState<Record<string, PatientMetrics>>({});
   const [vitals, setVitals] = useState<Record<string, DeviceVitals>>({});
   const [latestReply, setLatestReply] = useState<NurseReply | null>(null);
+  const [claim, setClaim] = useState<ClaimState>("idle");
 
   useEffect(() => {
     if (!enabled) {
@@ -63,25 +73,56 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
     setRemoteMetrics({});
     setVitals({});
     setLatestReply(null);
-    const sync = createNetworkSync({
-      sessionId,
-      onAlert: (e) => alertCb.current?.(e),
-      onStatusUpdate: () => {},
-      onMetrics: (m) => setRemoteMetrics((prev) => ({ ...prev, ...m })),
-      onVitals: (v) => setVitals((prev) => ({ ...prev, ...v })),
-      onReply: (r) => {
-        setLatestReply(r);
-        replyCb.current?.(r);
-      },
-      onDriver: (d) => setDriver(d),
-      onStatusChange: (s, t) => {
-        setStatus(s);
-        setTransport(t);
-      },
-    });
-    syncRef.current = sync;
+
+    let cancelled = false;
+    let sync: NetworkSync | null = null;
+
+    // Claim the console credential first, then connect.
+    //
+    // A `denied` claim is NOT the same thing as "an error, carry on". It means
+    // this bed is already provisioned to a different browser, and connecting
+    // anyway means every GET and POST returns 401 -- so the console sits there
+    // reconnecting forever, showing a patient nothing but a spinner. The only
+    // caller that may proceed after a denial is a signed-in staff account, whose
+    // own session authorises the read; anything else stops here and renders the
+    // re-pairing state.
+    (async () => {
+      setClaim("claiming");
+      const state = await claimConsoleToken(sessionId ?? "default");
+      if (cancelled) return;
+      setClaim(state);
+
+      if (state === "denied" || state === "error") {
+        const signedIn = await hasStaffSession();
+        if (cancelled) return;
+        if (!signedIn) {
+          setStatus("denied");
+          return;
+        }
+      }
+
+      sync = createNetworkSync({
+        sessionId,
+        onAlert: (e) => alertCb.current?.(e),
+        onStatusUpdate: () => {},
+        onMetrics: (m) => setRemoteMetrics((prev) => ({ ...prev, ...m })),
+        onVitals: (v) => setVitals((prev) => ({ ...prev, ...v })),
+        onReply: (r) => {
+          setLatestReply(r);
+          replyCb.current?.(r);
+        },
+        onDriver: (d) => setDriver(d as "memory" | "redis" | "mysql"),
+        onStatusChange: (s, t) => {
+          setStatus(s);
+          setTransport(t);
+        },
+      });
+      syncRef.current = sync;
+    })();
+
     return () => {
-      sync.destroy();
+      cancelled = true;
+      sync?.destroy();
       syncRef.current = null;
     };
     // Reconnect only when the session identity actually changes.
@@ -119,5 +160,5 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
     []
   );
 
-  return { syncRef, status, transport, driver, remoteMetrics, vitals, latestReply, sendAlert, sendAction, sendReply, sendPatientMetrics };
+  return { syncRef, status, transport, driver, remoteMetrics, vitals, latestReply, claim, sendAlert, sendAction, sendReply, sendPatientMetrics };
 }

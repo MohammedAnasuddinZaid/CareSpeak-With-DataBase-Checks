@@ -99,7 +99,7 @@ export default function PainScaleOverlay({ state, gesture, onConfirm, onCancel, 
               <button
                 onClick={() => onChange({ active: true, value: (state.value + 10) % 11 })}
                 aria-label="Previous number"
-                className="w-14 h-14 rounded-2xl bg-white/10 hover:bg-white/20 text-white text-2xl transition-all"
+                className="w-14 h-14 rounded-2xl bg-white/10 hover:bg-white/20 text-white text-2xl transition-colors"
               >
                 <ArrowLeft className="w-6 h-6 mx-auto" />
               </button>
@@ -109,14 +109,14 @@ export default function PainScaleOverlay({ state, gesture, onConfirm, onCancel, 
                   onConfirm(state.value);
                 }}
                 aria-label="Confirm pain level"
-                className="px-8 h-14 rounded-2xl bg-[#c63a22] hover:bg-[#a32e1a] text-white font-bold transition-all"
+                className="px-8 h-14 rounded-2xl bg-[#c63a22] hover:bg-[#a32e1a] text-white font-bold transition-colors"
               >
                 Confirm <Check className="inline w-5 h-5 ml-1 -mt-1" />
               </button>
               <button
                 onClick={() => onChange({ active: true, value: (state.value + 1) % 11 })}
                 aria-label="Next number"
-                className="w-14 h-14 rounded-2xl bg-white/10 hover:bg-white/20 text-white text-2xl transition-all"
+                className="w-14 h-14 rounded-2xl bg-white/10 hover:bg-white/20 text-white text-2xl transition-colors"
               >
                 <ArrowRight className="w-6 h-6 mx-auto" />
               </button>
@@ -126,7 +126,7 @@ export default function PainScaleOverlay({ state, gesture, onConfirm, onCancel, 
                   reset();
                 }}
                 aria-label="Cancel pain check"
-                className="ml-4 w-14 h-14 rounded-2xl bg-white/10 hover:bg-[#d94a4a] text-white transition-all"
+                className="ml-4 w-14 h-14 rounded-2xl bg-white/10 hover:bg-[#d94a4a] text-white transition-colors"
               >
                 <X className="w-6 h-6 mx-auto" />
               </button>

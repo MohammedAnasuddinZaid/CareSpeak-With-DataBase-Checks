@@ -493,6 +493,8 @@ export default function NurseViewPage() {
       ? `Live · ${transport.toUpperCase()}`
       : status === "reconnecting"
       ? "Reconnecting..."
+      : status === "denied"
+      ? "Not paired — re-pair this bed"
       : "Disconnected";
 
   return (
@@ -519,7 +521,7 @@ export default function NurseViewPage() {
                 }}
                 aria-label={alarmMutedState ? "Enable alarm sound" : "Mute alarm sound"}
                 title={alarmMutedState ? "Alarm muted — click to enable" : "Alarm armed — click to mute"}
-                className={`p-2.5 rounded-xl border transition-all ${
+                className={`p-2.5 rounded-xl border transition-colors ${
                   alarmMutedState
                     ? "bg-white border-[#ececec] text-[#9ca3af]"
                     : "bg-[#ecfdf5] border-[#a7f3d0] text-[#22a67e]"
@@ -603,7 +605,7 @@ export default function NurseViewPage() {
                 setUnseenMsgs(0);
                 setTrajectory(null);
               }}
-              className="ml-1 px-2 py-0.5 rounded-lg bg-white/70 hover:bg-white text-[#6e6e6e] hover:text-[#c63a22] border border-[#ececec] transition-all"
+              className="ml-1 px-2 py-0.5 rounded-lg bg-white/70 hover:bg-white text-[#6e6e6e] hover:text-[#c63a22] border border-[#ececec] transition-colors"
               title="Pair with a different session"
             >
               Switch
@@ -637,7 +639,7 @@ export default function NurseViewPage() {
                 {(["all", "unacknowledged", "hand", "eye"] as const).map((f) => (
                   <button key={f} onClick={() => setFilter(f)}
                     aria-pressed={filter === f}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors duration-200 ${
                       filter === f ? "bg-[#c63a22]/10 text-[#c63a22] border border-[#c63a22]/20" : "text-[#6e6e6e] hover:text-[#1f1f1f] border border-transparent"
                     }`}
                   >
@@ -662,7 +664,7 @@ export default function NurseViewPage() {
                     const isCritical = entry.gesture === "HELP" || entry.gesture === "EMERGENCY" || entry.escalated;
                     return (
                       <motion.div key={entry.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
-                        className={`flex items-center gap-4 px-6 py-4 transition-all duration-200 ${
+                        className={`flex items-center gap-4 px-6 py-4 transition-colors duration-200 ${
                           isCritical && !entry.resolved ? "bg-[#fef2f2] border-l-2 border-l-[#d94a4a]"
                           : !entry.acknowledged ? "bg-[#fdf4f0] border-l-2 border-l-[#c63a22]"
                           : "hover:bg-[#f5f3f0]"
@@ -687,11 +689,11 @@ export default function NurseViewPage() {
                         <div className="flex items-center gap-2 flex-shrink-0">
                           {!entry.acknowledged && (
                             <button onClick={() => handleAcknowledge(entry.id)} aria-label="Acknowledge"
-                              className="p-2 rounded-lg bg-[#ecfdf5] hover:bg-[#d1fae5] text-[#22a67e] transition-all duration-200"><CheckCircle className="w-4 h-4" /></button>
+                              className="p-2 rounded-lg bg-[#ecfdf5] hover:bg-[#d1fae5] text-[#22a67e] transition-colors duration-200"><CheckCircle className="w-4 h-4" /></button>
                           )}
                           {entry.acknowledged && !entry.escalated && !entry.resolved && (
                             <button onClick={() => handleEscalate(entry.id)} aria-label="Escalate"
-                              className="p-2 rounded-lg bg-[#fef2f2] hover:bg-[#fee2e2] text-[#d94a4a] transition-all duration-200"><ArrowUpCircle className="w-4 h-4" /></button>
+                              className="p-2 rounded-lg bg-[#fef2f2] hover:bg-[#fee2e2] text-[#d94a4a] transition-colors duration-200"><ArrowUpCircle className="w-4 h-4" /></button>
                           )}
                         </div>
                       </motion.div>
@@ -713,7 +715,7 @@ export default function NurseViewPage() {
                   return (
                     <div key={hour} className="flex-1 flex flex-col justify-end group relative" title={`${hour}:00 — ${count}`}>
                       <div
-                        className={`rounded-t-sm transition-all ${count > 0 ? "bg-[#c63a22]/70 group-hover:bg-[#c63a22]" : "bg-[#ececec]"}`}
+                        className={`rounded-t-sm transition-colors ${count > 0 ? "bg-[#c63a22]/70 group-hover:bg-[#c63a22]" : "bg-[#ececec]"}`}
                         style={{ height: `${Math.max(4, (count / max) * 100)}%` }}
                       />
                     </div>
@@ -788,13 +790,13 @@ export default function NurseViewPage() {
               <div className="flex flex-wrap gap-1.5 mb-3">
                 {QUICK_REPLIES.map((q) => (
                   <button key={q} onClick={() => handleSendReply(q)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[#eff6ff] text-[#3b82f6] hover:bg-[#dbeafe] transition-all border border-[#bfdbfe]">
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[#eff6ff] text-[#3b82f6] hover:bg-[#dbeafe] transition-colors border border-[#bfdbfe]">
                     {q}
                   </button>
                 ))}
                 <button onClick={() => handleSendReply("[PAIN] Requesting pain level")}
                   title="Opens a 0–10 pain scale on the patient screen; the patient selects with gaze"
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#fef2f2] text-[#d94a4a] hover:bg-[#fee2e2] transition-all border border-[#fecaca]">
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#fef2f2] text-[#d94a4a] hover:bg-[#fee2e2] transition-colors border border-[#fecaca]">
                   🩺 Request pain level
                 </button>
               </div>
@@ -810,7 +812,7 @@ export default function NurseViewPage() {
                 />
                 <button onClick={startVoiceReply} aria-label="Voice input"
                   title="Speak your message"
-                  className={`p-2.5 rounded-xl border transition-all ${micActive ? "bg-[#fef2f2] border-[#fecaca] text-[#d94a4a]" : "bg-white border-[#ececec] text-[#6e6e6e] hover:text-[#c63a22]"}`}>
+                  className={`p-2.5 rounded-xl border transition-colors ${micActive ? "bg-[#fef2f2] border-[#fecaca] text-[#d94a4a]" : "bg-white border-[#ececec] text-[#6e6e6e] hover:text-[#c63a22]"}`}>
                   <Mic className={`w-4 h-4 ${micActive ? "animate-pulse" : ""}`} />
                 </button>
                 <button onClick={() => handleSendReply()} disabled={!replyText.trim()}

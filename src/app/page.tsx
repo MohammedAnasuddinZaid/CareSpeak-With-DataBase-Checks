@@ -125,18 +125,18 @@ export default function LandingPage() {
             className="mt-10 flex flex-col sm:flex-row gap-4 justify-center"
           >
             <a href="/hand-mode"
-              className="group inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-[#c63a22] text-white font-semibold text-lg shadow-lg shadow-[#c63a22]/25 hover:shadow-xl hover:shadow-[#c63a22]/30 hover:translate-y-[-2px] active:translate-y-0 transition-all duration-200"
+              className="group inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-[#c63a22] text-white font-semibold text-lg shadow-lg shadow-[#c63a22]/25 hover:shadow-xl hover:shadow-[#c63a22]/30 hover:translate-y-[-2px] active:translate-y-0 transition-[color,background-color,border-color,box-shadow,transform] duration-200"
             >
               <Hand className="w-5 h-5 transition-transform group-hover:-rotate-6" />
               Try Hand Mode
-              <ArrowRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
+              <ArrowRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-[opacity,transform] duration-300" />
             </a>
             <a href="/eye-mode"
-              className="group inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-white/10 border border-white/20 text-white font-semibold text-lg hover:bg-white/20 hover:border-white/30 hover:translate-y-[-2px] active:translate-y-0 transition-all duration-200"
+              className="group inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-white/10 border border-white/20 text-white font-semibold text-lg hover:bg-white/20 hover:border-white/30 hover:translate-y-[-2px] active:translate-y-0 transition-[color,background-color,border-color,box-shadow,transform] duration-200"
             >
               <Eye className="w-5 h-5 transition-transform group-hover:-rotate-6" />
               Try Eye Mode
-              <ArrowRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
+              <ArrowRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-[opacity,transform] duration-300" />
             </a>
           </motion.div>
 
@@ -217,7 +217,7 @@ export default function LandingPage() {
             const Icon = feat.icon;
             return (
               <motion.div key={i} variants={fadeUp} className="group card p-8 animate-glow" style={{ animationDelay: `${i * 0.4}s` }}>
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-5 transition-all duration-300 group-hover:scale-110 group-hover:-translate-y-1"
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-5 transition-transform duration-300 group-hover:scale-110 group-hover:-translate-y-1"
                   style={{ background: `${feat.color}12`, color: feat.color }}
                 >
                   <Icon className="w-6 h-6" />
@@ -243,7 +243,7 @@ export default function LandingPage() {
             { num: "03", title: "Voice speaks", desc: "Browser TTS announces the need aloud in the patient's chosen language — nurses hear it immediately" },
           ].map((step, i) => (
             <motion.div key={i} variants={fadeUp} className="text-center group">
-              <div className="w-16 h-16 rounded-2xl bg-[#c63a22] flex items-center justify-center mx-auto mb-5 shadow-md group-hover:shadow-lg group-hover:shadow-[#c63a22]/20 group-hover:scale-110 transition-all duration-300 animate-float" style={{ animationDelay: `${i * 0.5}s` }}>
+              <div className="w-16 h-16 rounded-2xl bg-[#c63a22] flex items-center justify-center mx-auto mb-5 shadow-md group-hover:shadow-lg group-hover:shadow-[#c63a22]/20 group-hover:scale-110 transition-[box-shadow,transform] duration-300 animate-float" style={{ animationDelay: `${i * 0.5}s` }}>
                 <span className="text-2xl font-bold text-white">{step.num}</span>
               </div>
               <h3 className="text-xl font-bold text-[#1f1f1f] mb-3">{step.title}</h3>
@@ -275,18 +275,18 @@ export default function LandingPage() {
             </p>
             <div className="mt-10 flex flex-col sm:flex-row gap-4 justify-center">
               <a href="/hand-mode"
-                className="group inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-white text-[#c63a22] font-semibold text-lg shadow-xl hover:shadow-2xl hover:translate-y-[-2px] active:translate-y-0 transition-all duration-200"
+                className="group inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-white text-[#c63a22] font-semibold text-lg shadow-xl hover:shadow-2xl hover:translate-y-[-2px] active:translate-y-0 transition-[color,background-color,border-color,box-shadow,transform] duration-200"
               >
                 <Hand className="w-5 h-5" />
                 Try Hand Mode
-                <ArrowRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
+                <ArrowRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-[opacity,transform] duration-300" />
               </a>
               <a href="/eye-mode"
-                className="group inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-white/10 text-white border border-white/20 font-semibold text-lg hover:bg-white/20 hover:border-white/30 hover:translate-y-[-2px] active:translate-y-0 transition-all duration-200"
+                className="group inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-white/10 text-white border border-white/20 font-semibold text-lg hover:bg-white/20 hover:border-white/30 hover:translate-y-[-2px] active:translate-y-0 transition-[color,background-color,border-color,box-shadow,transform] duration-200"
               >
                 <Eye className="w-5 h-5" />
                 Try Eye Mode
-                <ArrowRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
+                <ArrowRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-[opacity,transform] duration-300" />
               </a>
             </div>
           </motion.div>
