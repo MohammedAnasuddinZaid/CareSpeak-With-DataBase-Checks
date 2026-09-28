@@ -1,10 +1,10 @@
-/* CareSpeak Service Worker v2
+/* CareSpeak Service Worker v3
  * - App shell + pages: network-first with cache fallback.
  * - MediaPipe WASM/models on CDNs: cache-first (AI works fully offline after first load).
  * - /api/*: never cached (live data only).
  * - Background Sync "carespeak-flush": pings clients to flush the offline outbox.
  */
-const VERSION = "carespeak-v2";
+const VERSION = "carespeak-v3";
 const SHELL = [
   "/", "/hand-mode", "/eye-mode", "/nurse-view", "/logs", "/report", "/about", "/emergency",
 ];
