@@ -5,19 +5,19 @@
  *
  *  Bill of materials (~₹1,100 total):
  *    - ESP32 DevKit V1 .................. ₹350
- *    - MAX30102 heart-rate/SpO2 ......... ₹150
+ *    - MAX30105 heart-rate/SpO2 sensor ... ₹150
  *    - Push button (SOS) + buzzer ....... ₹40
  *    - 0.96" SSD1306 OLED (optional) ... ₹200
  *    - 18650 cell + TP4056 charger ...... ₹180
  *    - Jumper wires / strap / enclosure . ₹180
  *
  *  Wiring:
- *    MAX30102 : VIN->3V3, GND->GND, SDA->GPIO21, SCL->GPIO22
+ *    MAX30105 : VIN->3V3, GND->GND, SDA->GPIO21, SCL->GPIO22
  *    SOS btn  : GPIO27 -> GND (internal pull-up)
  *    Buzzer   : GPIO25 (active buzzer)
  *
  *  Behavior:
- *    - Streams HR/battery/RSSI as JSON to POST /api/ingest every 15s.
+ *    - Streams HR/SpO2/battery/RSSI as JSON to POST /api/ingest every 15s.
  *    - SOS press -> immediate EMERGENCY fan-out on every nurse dashboard,
  *      plus a local buzzer alarm until acknowledged.
  *    - For no-WiFi wards see docs/HARDWARE.md (LoRa / GSM variants).
@@ -62,6 +62,38 @@ bool sosPending = false;          // SOS dispatch not yet confirmed by the serve
 unsigned long lastSosRetry = 0;
 const unsigned long SOS_RETRY_MS = 4000;   // retry backoff for undelivered emergencies
 
+// ── Optional SpO2 estimate ────────────────────────────────────────
+// The MAX30105 drives a red and an IR LED. Oxygenation changes how much red
+// light is absorbed relative to IR, so the ratio of the two gives an estimate
+// of SpO2 using the datasheet's fit:
+//
+//     R       = (AC_red / DC_red) / (AC_ir / DC_ir)
+//     SpO2    = 45.06 * R^2 - 30.354 * R + 94.845
+//
+// DC is the slow average (what the tissue absorbs overall); AC is the
+// pulsatile swing on top of it (what the heartbeat modulates).
+//
+// This is an ESTIMATE, not a measurement. Real accuracy depends on the sensor
+// batch, finger placement, ambient light and skin tone, and no consumer-grade
+// MAX30105 should be read as a diagnostic oximeter. It is therefore OFF by
+// default: a plausible-but-wrong SpO2 sitting in a nurse's dashboard can mask
+// hypoxia, which is a worse failure than a metric that is simply absent.
+// Set to true only after checking it against a reference oximeter on real
+// fingers, and only publish readings that pass the stability gate below.
+const bool ENABLE_SPO2_ESTIMATE = false;
+
+const int SPO2_WINDOW      = 64;    // samples used to extract AC (peak-to-trough)
+const int SPO2_HISTORY     = 5;     // median filter length on finished readings
+const int SPO2_WARMUP_SAMPLES = 32; // ignore this many samples while DC settles
+
+float irDc = 0, redDc = 0;
+float irWin[SPO2_WINDOW], redWin[SPO2_WINDOW];
+float irMin = 0, irMax = 0, redMin = 0, redMax = 0;
+int  spo2Idx = 0, spo2Count = 0, spo2Total = 0;
+float spo2Hist[SPO2_HISTORY];
+int  spo2HistCount = 0;
+float spo2Published = 0;
+
 // ════════════════════════════════════════════════════════════════
 void setup() {
   Serial.begin(115200);
@@ -69,7 +101,7 @@ void setup() {
   pinMode(PIN_BUZZER, OUTPUT);
 
   if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
-    Serial.println("MAX30102 not found — check wiring");
+    Serial.println("MAX30105 not found — check wiring");
   } else {
     particleSensor.setup();
     particleSensor.setPulseAmplitudeRed(0x0A);
@@ -85,6 +117,7 @@ void loop() {
   }
 
   readHeartRate();
+  updateSpO2();
   pollSosButton();
 
   // A lost EMERGENCY is unacceptable: if the SOS POST failed (Wi-Fi blip,
@@ -140,6 +173,71 @@ void readHeartRate() {
   if (irValue < 50000) { beatsPerMinute = 0; beatAvg = 0; } // finger removed
 }
 
+// Fold one IR/red sample into the SpO2 estimator and update the published
+// value. Cheap enough to run every loop pass; the window logic does the
+// filtering rather than the sample rate.
+void updateSpO2() {
+  if (!ENABLE_SPO2_ESTIMATE) return;
+
+  float ir = (float)particleSensor.getIR();
+  float red = (float)particleSensor.getRed();
+  if (ir < 50000 || red < 50000) {          // no finger / ambient light floor
+    spo2Count = 0; spo2Idx = 0; spo2HistCount = 0;
+    spo2Published = 0;
+    return;
+  }
+
+  // DC: slow exponential average. α is small so a single spike cannot move it.
+  if (spo2Total == 0) { irDc = ir; redDc = red; }
+  else { irDc += (ir - irDc) * 0.02f; redDc += (red - redDc) * 0.02f; }
+  spo2Total++;
+
+  // AC: peak-to-trough of the detrended signal over the window.
+  if (spo2Count == 0) { irMin = irMax = ir; redMin = redMax = red; }
+  else {
+    if (ir < irMin) irMin = ir;
+    if (ir > irMax) irMax = ir;
+    if (red < redMin) redMin = red;
+    if (red > redMax) redMax = red;
+  }
+  irWin[spo2Idx] = ir;
+  redWin[spo2Idx] = red;
+  spo2Idx = (spo2Idx + 1) % SPO2_WINDOW;
+  if (spo2Count < SPO2_WINDOW) spo2Count++;
+
+  if (spo2Total < SPO2_WARMUP_SAMPLES || spo2Count < SPO2_WINDOW) return;
+
+  float acIr  = irMax  - irMin;
+  float acRed = redMax - redMin;
+  if (acIr <= 0 || acRed <= 0) return;
+
+  float r = (acRed / redDc) / (acIr / irDc);
+  float spo2 = 45.06f * r * r - 30.354f * r + 94.845f;
+  if (spo2 < 50 || spo2 > 100) return;      // implausible: sensor not on a finger
+
+  // Median of the last few readings. A raw optical estimate is jumpy enough
+  // that a single frame could swing the dashboard by 10%.
+  spo2Hist[spo2HistCount < SPO2_HISTORY ? spo2HistCount++ : SPO2_HISTORY - 1] = spo2;
+  if (spo2HistCount < SPO2_HISTORY) return;
+
+  float sorted[SPO2_HISTORY];
+  for (int i = 0; i < SPO2_HISTORY; i++) sorted[i] = spo2Hist[i];
+  for (int i = 1; i < SPO2_HISTORY; i++) {
+    float key = sorted[i];
+    int j = i - 1;
+    while (j >= 0 && sorted[j] > key) { sorted[j + 1] = sorted[j]; j--; }
+    sorted[j + 1] = key;
+  }
+  float med = sorted[SPO2_HISTORY / 2];
+  float spread = sorted[SPO2_HISTORY - 1] - sorted[0];
+
+  // Stability gate: only publish once the reading has settled. An unstable
+  // window means motion or a poor contact, and a moving estimate is not a
+  // measurement.
+  if (spread > 4.0f) return;
+  spo2Published = med;
+}
+
 void pollSosButton() {
   static bool lastState = HIGH;
   bool current = digitalRead(PIN_SOS_BUTTON);
@@ -176,6 +274,9 @@ void postVitals() {
   body += "\"deviceId\":\"" + String(DEVICE_ID) + "\",";
   body += "\"type\":\"vitals\",";
   if (beatAvg > 0) body += "\"heartRate\":" + String(beatAvg) + ",";
+  // Only sent when the estimator produced a stable, in-range reading; an
+  // unstable or absent value is omitted rather than guessed.
+  if (spo2Published > 0) body += "\"spo2\":" + String((int)(spo2Published + 0.5f)) + ",";
   body += "\"sosActive\":" + String(sosActive ? "true" : "false") + ",";
   if (batteryPct >= 0) body += "\"batteryPct\":" + String(batteryPct) + ",";
   body += "\"rssi\":" + String(WiFi.RSSI());
@@ -216,6 +317,5 @@ int readBatteryPercent() {
   // Wire an ADC divider to GPIO34 and map 3.0-4.2 V -> 0-100% here.
   // Returning -1 means "no sensor" — postVitals() omits the field so the
   // dashboard shows "unknown" instead of a false full battery.
-  return -1;
-}
+  return -1;}
 

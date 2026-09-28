@@ -216,8 +216,6 @@ export default function HandModePage() {
               )}
             </AnimatePresence>
 
-            <MyHistoryPanel />
-
             <div className="card p-6">
               <h3 className="text-sm font-bold text-[#1f1f1f] mb-4 flex items-center gap-2">
                 <Activity className="w-4 h-4 text-[#c63a22]" /> Gesture Guide
@@ -254,6 +252,12 @@ export default function HandModePage() {
               }`}>
               <RotateCcw className="w-4 h-4" /> Replay Last Alert <Volume2 className="w-4 h-4 opacity-50" />
             </button>
+
+            {/* History sits below the guide and the replay control, not above
+                them: the guide and the camera are what the patient needs in the
+                first second at the bedside, and history is a "was I heard
+                before" question that should not push them down the page. */}
+            <MyHistoryPanel />
           </div>
         </div>
       </div>

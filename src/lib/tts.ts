@@ -11,6 +11,7 @@ const DEFAULT_CONFIG: TTSConfig = {
   pitch: 1.0,
   volume: 1.0,
   language: "en-US",
+  languageExplicit: false,
 };
 
 const GREETINGS: Record<SupportedLanguage, string> = {
@@ -28,6 +29,27 @@ const GREETINGS: Record<SupportedLanguage, string> = {
 
 function isSupported(v: string): v is SupportedLanguage {
   return v in GREETINGS;
+}
+
+/**
+ * Map an arbitrary stored locale onto a language CareSpeak can actually speak.
+ *
+ * A patient profile can hold anything ("en-GB", "ta", "Tamil"), so this tries an
+ * exact match, then a same-base-language match, then gives up. Guessing here is
+ * worse than silence: speaking Hindi to a Malayalam speaker is not a fallback.
+ */
+export function resolveProfileLanguage(raw: string | null | undefined): SupportedLanguage | null {
+  if (!raw) return null;
+  const norm = raw.trim().replace(/_/g, "-");
+  if (!norm) return null;
+  if (isSupported(norm)) return norm;
+  const base = norm.split("-")[0]?.toLowerCase();
+  if (!base) return null;
+  return (
+    (Object.keys(GREETINGS) as SupportedLanguage[]).find(
+      (l) => l.split("-")[0]?.toLowerCase() === base,
+    ) ?? null
+  );
 }
 
 export function getSavedLanguage(): SupportedLanguage {
@@ -268,14 +290,35 @@ export class VoiceAlert {
     return this.config.language;
   }
 
-  setLanguage(lang: SupportedLanguage) {
+  setLanguage(lang: SupportedLanguage, opts: { explicit?: boolean; silent?: boolean } = {}) {
     this.config.language = lang;
+    // A deliberate pick sticks. A programmatic adoption leaves the language
+    // "derived" so a later profile sync can still update it.
+    if (opts.explicit !== false) this.config.languageExplicit = true;
     saveTTSConfig(this.config);
     saveLanguage(lang);
     notifyUiLanguageChanged(); // re-render every i18n-aware component
+    // Adopting a stored preference runs on page load; a greeting nobody asked
+    // for at 2am is a defect, not a feature.
+    if (opts.silent) return;
     void ensureVoices().then(() => {
       doSpeak(GREETINGS[lang] ?? GREETINGS["en-US"], lang);
     });
+  }
+
+  /**
+   * Speak in the signed-in patient's own recorded language.
+   *
+   * Silent, and never overrides a deliberate UI choice -- a nurse who picked
+   * English for herself keeps English even while a Tamil patient's profile is
+   * loaded. Returns true when the language actually changed.
+   */
+  applyProfileLanguage(raw: string | null | undefined): boolean {
+    if (this.config.languageExplicit) return false;
+    const lang = resolveProfileLanguage(raw);
+    if (!lang || lang === this.config.language) return false;
+    this.setLanguage(lang, { explicit: false, silent: true });
+    return true;
   }
 
   speak(gestureName: string, type: GestureType = "hand"): void {

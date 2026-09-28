@@ -125,6 +125,13 @@ export interface TTSConfig {
   volume: number;
   voiceURI?: string;
   language: SupportedLanguage;
+  /**
+   * True once the person deliberately picked a language in the UI. Until then
+   * `language` is treated as derived and the signed-in patient's stored
+   * preference is allowed to overwrite it, so a patient who registered as
+   * Tamil-speaking is spoken to in Tamil on a shared ward tablet.
+   */
+  languageExplicit?: boolean;
 }
 
 export interface EscalationRule {

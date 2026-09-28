@@ -4,6 +4,7 @@ import Navbar from "@/components/Navbar";
 import SiteFooter from "@/components/SiteFooter";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
+import ProfileLanguageSync from "@/components/ProfileLanguageSync";
 
 export const metadata: Metadata = {
   title: "CareSpeak — Giving Every Patient a Voice",
@@ -52,6 +53,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen antialiased">
         <ServiceWorkerRegister />
+        <ProfileLanguageSync />
         <ErrorBoundary>
           <Navbar />
           {/* The floor is `100vh` and not `100dvh` on purpose: the auth shell

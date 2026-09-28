@@ -280,8 +280,6 @@ export default function EyeModePage() {
               </div>
             </div>
 
-            <MyHistoryPanel />
-
             <button onClick={() => gesture && voiceAlert.speak(gesture, "eye")} disabled={!gesture}
               aria-label="Replay last alert"
               className={`w-full py-3.5 rounded-2xl transition-[color,background-color,border-color,box-shadow,transform] duration-200 text-sm font-medium flex items-center justify-center gap-2 ${
@@ -289,6 +287,10 @@ export default function EyeModePage() {
               }`}>
               <RotateCcw className="w-4 h-4" /> Replay Last Alert <Volume2 className="w-4 h-4 opacity-50" />
             </button>
+
+            {/* Below the guide, matching hand mode: a patient arriving at the
+                bedside needs the guide and the gaze window first. */}
+            <MyHistoryPanel />
           </div>
 
         </div>
