@@ -62,13 +62,28 @@ describe("exact Shapley attribution (additive risk model)", () => {
 
 describe("clinical citation corpus", () => {
   it("renders citations as DOCID §section with passage text", () => {
-    const c = { docId: "RCP-NEWS2", section: "hr" } as const;
-    expect(formatCitation(c)).toBe("RCP-NEWS2 §hr");
-    expect(citationPassage(c)).toContain("Heart rate parameter");
+    const c = { docId: "RCP-NEWS2", section: "pulse" } as const;
+    expect(formatCitation(c)).toBe("RCP-NEWS2 §pulse");
+    expect(citationPassage(c)).toContain("Pulse");
+  });
+
+  it("flags a missing section instead of silently dropping the pointer", () => {
+    // A broken citation that renders as a clean citation is worse than no
+    // citation: it claims traceability the app does not actually have.
+    expect(formatCitation({ docId: "RCP-NEWS2", section: "no-such-section" })).toContain(
+      "section missing",
+    );
+  });
+
+  it("every section the risk engine cites actually resolves", () => {
+    for (const f of computeRisk({ alertnessScore: 10 }, [entry({})], Date.now()).factors) {
+      expect(f.citation).toBeDefined();
+      expect(formatCitation(f.citation!)).not.toContain("missing");
+    }
   });
 
   it("unknown citations degrade gracefully", () => {
-    expect(formatCitation({ docId: "NOPE", section: "x" })).toBe("NOPE §x");
+    expect(formatCitation({ docId: "NOPE", section: "x" })).toBe("NOPE §x (source not indexed)");
     expect(citationPassage({ docId: "NOPE", section: "x" })).toBe("");
   });
 });

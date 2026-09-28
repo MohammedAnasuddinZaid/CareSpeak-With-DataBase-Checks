@@ -8,7 +8,15 @@ This document compiles all clinical guidelines, academic research papers, algori
 
 ### National Early Warning Score (NEWS) 2
 - **Citation:** Royal College of Physicians (RCP). *National Early Warning Score (NEWS) 2: Standardising the assessment of acute-illness severity in the NHS*. RCP, London, 2017.
-- **Application in CareSpeak:** Provides the standardized physiological parameter scoring weights for heart rate, SpO₂ (Scale 1 & 2), respiratory rate, blood pressure, temperature, and consciousness level. Aggregate scores $\ge 5$ trigger emergent review protocols in the CareSpeak risk engine (`RCP-NEWS2 §hr`, `RCP-NEWS2 §spo2-scale1`, `RCP-NEWS2 §response`).
+- **Application in CareSpeak:** Implemented in full in `src/lib/news2.ts`. Provides the standardized physiological parameter scoring weights for respiratory rate, SpO₂ (Scale 1 & 2), systolic blood pressure, pulse, consciousness (ACVPU) and temperature, plus the +2 supplemental-oxygen weighting score. Aggregate bands are 1–4 (low), 5–6 (medium) and $\ge 7$ (high), each mapped to its published clinical response. A single parameter scoring 3 triggers review **regardless of the aggregate** (`RCP-NEWS2 §single-red`).
+- **Safety properties:** a partially observed set is never reported as a low score — missing parameters are listed and the aggregate is labelled a floor, because observations that silently score zero are how track-and-trigger systems under-triage. SpO₂ Scale 2 is never inferred; it is a documented clinical decision (`RCP-NEWS2 §spo2-scale2`).
+- **Extension:** `newsTrend()` reads successive aggregates as a series and flags deterioration *within* a low band (e.g. 1 → 3 over an hour), which a single snapshot cannot represent.
+
+### Pain Assessment from Facial Action Units
+- **Citation:** Prkachin, A. L. & Solomon, R. C. (2008). *Determining pain by facial expression*. Pain, 139(1–3), 249–260. — the PSPI action-unit set (AU 4, 6, 7, 9, 10, 43).
+- **Citation:** Kappas, S. et al. ICU pain-expression work, identifying lips part (AU 25) and jaw drop (AU 26) as the strongest single indicators on real bedside footage, and reporting that the OpenFace FACS tool reaches only F1 0.42 in that setting.
+- **Application in CareSpeak:** `src/lib/painSignals.ts`. Action units are measured as normalised FaceMesh geometry, then scored against **this patient's own learned neutral face** rather than absolute thresholds. The domain shift documented in the ICU literature is the reason: absolute thresholds misread permanently low brows, facial asymmetry and poor lighting as pain.
+- **Safety properties:** output is decision support, never a pain scale. Every result carries its own caveats, including the reported lower accuracy for female and darker-skinned patients. A frame the camera cannot read returns `unassessable`, never `none`, so an unseen patient is never reported as comfortable. Closed eyes are treated as a *signal* (AU 43), not a data-quality failure. Findings are offered to the patient as a question rather than asserted to staff.
 
 ### NICE Clinical Guideline CG50
 - **Citation:** National Institute for Health and Care Excellence (NICE). *Acutely ill adults in hospital: recognising and responding to deterioration*. NICE clinical guideline CG50, July 2007 (updated periodically).

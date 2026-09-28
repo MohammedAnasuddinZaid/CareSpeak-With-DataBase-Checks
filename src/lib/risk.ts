@@ -49,14 +49,17 @@ const components: Component[] = [
   (i) => {
     const hr = i.vitals?.heartRate;
     if (hr == null) return null;
-    const w = hr <= 40 || hr > 130 ? 25 : (hr < 50 || hr > 110 ? 12 : 0);
+    // Boundaries match the NEWS2 pulse bands exactly (≤40 or ≥131 scores 3;
+    // 41-50 and 91-110 score 1; 111-130 scores 2) so the citation below is
+    // honest about what the numbers mean.
+    const w = hr <= 40 || hr >= 131 ? 25 : (hr <= 50 || (hr >= 91 && hr <= 110) ? 12 : 0);
     if (w === 0) return null;
     return {
       key: "hr",
       label: "Heart rate deviation",
       weight: w,
-      detail: `${Math.round(hr)} bpm${hr > 130 || hr < 50 ? " — NEWS2 aggregate-risk range" : ""}`,
-      citation: { docId: "RCP-NEWS2", section: "hr" },
+      detail: `${Math.round(hr)} bpm — outside the NEWS2 normal band`,
+      citation: { docId: "RCP-NEWS2", section: "pulse" },
     };
   },
   (i) => {
