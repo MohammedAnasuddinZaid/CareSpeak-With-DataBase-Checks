@@ -6,6 +6,7 @@ import { classifyEyeGesture, EyeGestureSmoother, GazeStabilizer, IrisCalibrator,
 import { voiceAlert } from "@/lib/tts";
 import { addGestureLog } from "@/lib/gestureLog";
 import { EyeGesture, EYE_GESTURE_MAP, PatientMetrics, Point } from "@/types";
+import { gazeFromIrisOffset, GazePoint } from "@/lib/dwell";
 
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm";
 const MODEL_URL =
@@ -81,6 +82,16 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
   const faceDetectedRef = useRef(false);
   const [isPaused, setIsPaused] = useState(false);
   const [patientMetrics, setPatientMetrics] = useState<PatientMetrics>({});
+
+  /**
+   * Continuous gaze pointer for dwell selection, as a ref rather than state.
+   *
+   * This updates every frame (~30Hz). Pushing it through React state would
+   * re-render the whole page on every camera frame, so consumers read it from
+   * their own rAF loop. `null` means "no usable gaze right now" — a blink or a
+   * lost face — which is what cancels a pending dwell selection.
+   */
+  const gazeRef = useRef<GazePoint | null>(null);
 
   function computePatientMetrics() {
     const m = metricsRef.current;
@@ -176,6 +187,9 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
       faceDetectedRef.current = hasFace;
       setFaceDetected(hasFace); // change-only update: no per-frame re-renders
     }
+    // No face means no pointer — a dwell timer must not survive the patient
+    // looking away from the screen entirely.
+    if (!hasFace) gazeRef.current = null;
 
     let raw = null;
     let faceLm: Point[] | null = null;
@@ -195,6 +209,16 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
       blinkingNow = !!classified?.isBlinking;
       if (!blinkingNow && prevBlinkRef.current) stabilizerRef.current.markRecovery();
       prevBlinkRef.current = blinkingNow;
+
+      // Gaze pointer for dwell selection. Suppressed while blinking because iris
+      // landmarks swing wildly on a blink, and a blink here also means the
+      // patient is using the deliberate gesture path, not looking at a tile.
+      if (blinkingNow) {
+        gazeRef.current = null;
+      } else {
+        const base = calibratorRef.current.value;
+        gazeRef.current = gazeFromIrisOffset(rawOff.x - base.x, rawOff.y - base.y);
+      }
       // Hysteresis + glitch guard + debounce -> stable stream for the smoother.
       raw = stabilizerRef.current.filter(classified);
     }
@@ -417,6 +441,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     calibratorRef.current.reset();
     stabilizerRef.current.reset();
     prevBlinkRef.current = false;
+    gazeRef.current = null;
     restState.current = { transitions: 0, windowStart: 0, cooldownUntil: 0 };
     pauseState.current = { paused: false, closeStart: 0 };
     lastLoggedGesture.current = null;
@@ -447,6 +472,7 @@ export function useEyeGesture({ onGesture }: UseEyeGestureOptions = {}) {
     faceDetected,
     isPaused,
     patientMetrics,
+    gazeRef,
     startCamera,
     stopCamera,
   };

@@ -17,6 +17,7 @@ import { publishConsoleEvent } from "@/lib/server/publish";
 import { getCurrentUser, isStaff, requestMeta } from "@/lib/server/auth";
 import { recordAudit } from "@/lib/server/audit";
 import { AlertAction, DeviceVitals, GestureLogEntry, NurseReply, PatientMetrics } from "@/types";
+import { SERVER_GESTURE_NAMES } from "@/lib/phrases";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,7 +25,15 @@ export const runtime = "nodejs";
 /** Actions only clinical staff may perform on a patient's record. */
 const CLINICAL_ACTIONS = new Set(["acknowledge", "escalate", "resolve", "reply"]);
 
-const GESTURES = new Set(["YES", "NO", "HELP", "WATER", "HELLO", "EMERGENCY", "SYSTEM"]);
+/**
+ * Gesture names the server will persist.
+ *
+ * An unrecognised name is dropped silently, so this allowlist is the only thing
+ * standing between a client bug and a gesture that appears to work locally but
+ * never reaches the nurse. It is built from the shared catalogue so a new
+ * phrase is accepted the moment it exists.
+ */
+const GESTURES = SERVER_GESTURE_NAMES;
 
 function bad(error: string, status = 400) {
   return NextResponse.json({ ok: false, error }, { status });

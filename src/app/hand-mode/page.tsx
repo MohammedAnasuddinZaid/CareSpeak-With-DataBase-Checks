@@ -18,6 +18,7 @@ import CompanionMessageInput from "@/components/CompanionMessageInput";
 import DemoModeControls from "@/components/DemoModeControls";
 import ModeSwitcher from "@/components/ModeSwitcher";
 import MyHistoryPanel from "@/components/MyHistoryPanel";
+import PhraseBoard from "@/components/PhraseBoard";
 import PatientMetricsCard from "@/components/PatientMetricsCard";
 import NurseReplyBanner from "@/components/NurseReplyBanner";
 import { linkStatusLabel } from "@/lib/networkSync";
@@ -258,6 +259,10 @@ export default function HandModePage() {
                 first second at the bedside, and history is a "was I heard
                 before" question that should not push them down the page. */}
             <MyHistoryPanel />
+
+            {/* Phrase board last: it is the fallback for a patient who cannot
+                form a gesture at all, and it broadcasts on the same channel. */}
+            <PhraseBoard sessionId={sessionId} modality="hand" onBroadcast={sendAlert} />
           </div>
         </div>
       </div>

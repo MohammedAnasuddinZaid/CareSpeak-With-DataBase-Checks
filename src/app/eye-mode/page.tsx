@@ -18,6 +18,7 @@ import CompanionMessageInput from "@/components/CompanionMessageInput";
 import DemoModeControls from "@/components/DemoModeControls";
 import ModeSwitcher from "@/components/ModeSwitcher";
 import MyHistoryPanel from "@/components/MyHistoryPanel";
+import PhraseBoard from "@/components/PhraseBoard";
 import PatientMetricsCard from "@/components/PatientMetricsCard";
 import NurseReplyBanner from "@/components/NurseReplyBanner";
 import { linkStatusLabel } from "@/lib/networkSync";
@@ -59,7 +60,7 @@ export default function EyeModePage() {
 
   const {
     videoRef, canvasRef, gesture, confidence, loading, error, cameraOn,
-    faceDetected, isPaused, patientMetrics, startCamera, stopCamera,
+    faceDetected, isPaused, patientMetrics, gazeRef, startCamera, stopCamera,
   } = useEyeGesture({ onGesture: broadcast });
 
   /* ── pain scale (gaze-driven; rides the existing gesture stream untouched) ── */
@@ -291,6 +292,8 @@ export default function EyeModePage() {
             {/* Below the guide, matching hand mode: a patient arriving at the
                 bedside needs the guide and the gaze window first. */}
             <MyHistoryPanel />
+
+            <PhraseBoard sessionId={sessionId} modality="eye" onBroadcast={sendAlert} gazeRef={gazeRef} />
           </div>
 
         </div>
