@@ -183,6 +183,20 @@ export const env = {
   get appOrigin(): string {
     return (process.env.APP_ORIGIN || "http://localhost:3000").replace(/\/+$/, "");
   },
+  /**
+   * Brand shown in outbound email. Kept configurable rather than hardcoded so a
+   * hospital deployment can rebrand without a code change, but the defaults are
+   * the product's own.
+   */
+  get brand(): { name: string; tagline: string; founder: string; supportEmail: string } {
+    return {
+      name: process.env.MAIL_BRAND_NAME || "CareSpeak",
+      tagline: process.env.MAIL_BRAND_TAGLINE || "Every patient gets a voice.",
+      founder: process.env.MAIL_FOUNDER_NAME || "Mohammed Anasuddin Zaid",
+      supportEmail:
+        process.env.MAIL_SUPPORT_EMAIL || "mohammedanasuddin256@gmail.com",
+    };
+  },
 };
 
 /**
@@ -239,11 +253,22 @@ export function auditConfiguration(): {
 
   const remoteOrigin = !/^https?:\/\/(localhost|127\.0\.0\.1)/.test(env.appOrigin);
 
-  if (env.resendApiKey) {
-    // Resend only accepts mail from a domain you have verified with them.
-    if (env.smtp.from && /@gmail\.com|@yahoo\.com|@hotmail\.com|@outlook\.com/i.test(env.smtp.from)) {
+  // env.ts reads the environment directly rather than importing the mailer, to
+  // keep this module free of a dependency cycle (mailer -> env -> mailer).
+  const resendConfigured = Boolean(process.env.RESEND_API_KEY);
+
+  if (resendConfigured) {
+    // Resend only accepts mail from a domain you have verified with them, and a
+    // free-mail address can never be verified. Falling back to the sandbox
+    // works, but it delivers ONLY to the Resend account owner's own address, so
+    // no other patient can ever receive a code. Say so plainly.
+    if (env.smtp.from && /@(gmail|yahoo|hotmail|outlook|icloud|proton(mail)?|aol)\./i.test(env.smtp.from)) {
       warnings.push(
-        "RESEND_API_KEY is set but MAIL_FROM is a free-mail address: Resend will reject it. Set MAIL_FROM to a verified domain, e.g. no-reply@yourdomain.com.",
+        `MAIL_FROM is a free-mail address, which Resend cannot verify. Falling back to the Resend sandbox, which delivers ONLY to the address registered on the Resend account -- email sign-in for any other patient will fail until a domain is verified at resend.com/domains.`,
+      );
+    } else if (!env.smtp.from) {
+      warnings.push(
+        "MAIL_FROM is not set, so the Resend sandbox is used and email sign-in only works for the Resend account owner's own address. Set MAIL_FROM to a verified domain.",
       );
     }
   } else if (!env.smtp.pass) {
