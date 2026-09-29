@@ -97,7 +97,7 @@ export default function NurseViewPage() {
     setUnseenMsgs((n) => n + 1);
   }, []);
 
-  const { status, transport, driver, remoteMetrics, vitals, claim, claimDeniedReason, claimRotated, sendAction, sendReply, syncRef } = useLiveSync({
+  const { status, transport, driver, remoteMetrics, vitals, claim, claimRotated, sendAction, sendReply, syncRef } = useLiveSync({
     sessionId: sessionInput,
     enabled: paired,
     onAlert: handleAlert,
@@ -494,9 +494,7 @@ export default function NurseViewPage() {
       : status === "reconnecting"
       ? "Reconnecting..."
       : status === "denied"
-      ? claimRotated
-        ? "Paired · take-over in progress"
-        : "Not paired — this bed is already linked"
+      ? "Not paired — couldn't reach this bed"
       : "Disconnected";
 
   return (
@@ -615,11 +613,11 @@ export default function NurseViewPage() {
           </div>
         )}
 
-        {/* ── recovery panel: a claim denial that a nurse is not incorrectly
-             told to "re-pair" themselves. The QR is a public handle; a seed or
-             second scan cannot mint a new credential anonymously, and the UI
-             must say so and route to the correct remedy (staff sign-in) rather
-             than looping the user back into the same dead 409. ── */}
+        {/* ── recovery panel: only shown when pairing genuinely failed (the
+             code exists but the server refused a credential, or the bed session
+             is over). Scanning the QR / entering a valid code always mints a
+             viewer credential server-side, so this should never block a normal
+             view. ── */}
         {paired && claim === "denied" && !claimRotated && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
@@ -629,18 +627,10 @@ export default function NurseViewPage() {
             <div className="flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 text-[#c63a22] mt-0.5 flex-shrink-0" />
               <div className="flex-1">
-                <h3 className="font-semibold text-[#1f1f1f] text-sm">Bed already linked to another console</h3>
+                <h3 className="font-semibold text-[#1f1f1f] text-sm">Couldn't open this bed</h3>
                 <p className="text-xs text-[#6e6e6e] mt-1">
-                  {claimDeniedReason === "forbidden"
-                    ? "You are signed in but not assigned to this bed, so the take-over was refused."
-                    : "The QR code alone is not a credential. Sign in as a nurse assigned to this bed to take over this console."}
+                  The bed session may have ended. Double-check the code and try again.
                 </p>
-                <a
-                  href={`/login?next=${encodeURIComponent(`/nurse-view?session=${encodeURIComponent(sessionInput)}`)}`}
-                  className="inline-flex items-center gap-2 mt-3 px-4 py-2 rounded-xl bg-[#c63a22] hover:bg-[#a92f19] text-white text-xs font-medium transition-colors"
-                >
-                  Sign in as staff to take over
-                </a>
               </div>
             </div>
           </motion.div>

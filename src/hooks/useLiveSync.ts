@@ -7,7 +7,7 @@ import {
   ConnStatus,
   Transport,
 } from "@/lib/networkSync";
-import { claimConsoleToken, hasStaffSession, type ClaimState } from "@/lib/session";
+import { claimConsoleToken, type ClaimState } from "@/lib/session";
 import {
   DeviceVitals,
   GestureLogEntry,
@@ -83,15 +83,14 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
     let cancelled = false;
     let sync: NetworkSync | null = null;
 
-    // Claim the console credential first, then connect.
+    // Claim a viewer credential first, then connect.
     //
-    // A `denied` claim is NOT the same thing as "an error, carry on". It means
-    // this bed is already provisioned to a different browser, and connecting
-    // anyway means every GET and POST returns 401 -- so the console sits there
-    // reconnecting forever, showing a patient nothing but a spinner. The only
-    // caller that may proceed after a denial is a signed-in staff account, whose
-    // own session authorises the read; anything else stops here and renders the
-    // re-pairing state.
+    // For a valid code this always succeeds server-side: scanning the QR or
+    // entering the code is enough to view the bed, no sign-in required, and the
+    // claim endpoint mints each device its own credential. A failed claim here
+    // is a transient network issue (or an invalid/ended session), not a
+    // staff-rotation wall, so we still attempt the connection -- the sync API
+    // reflects real connectivity by 401-ing if the server truly refuses.
     (async () => {
       setClaim("claiming");
       const result = await claimConsoleToken(sessionId ?? "default");
@@ -99,18 +98,6 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
       setClaim(result.state);
       setClaimDeniedReason(result.deniedReason);
       setClaimRotated(Boolean(result.rotated));
-
-      if (result.state === "denied" || result.state === "error") {
-        const signedIn = await hasStaffSession();
-        if (cancelled) return;
-        // A signed-in staff member may proceed on an assignment even without a
-        // console credential (the sync API authorises by their own session).
-        // But an anonymous denial is terminal: connecting would loop on 401.
-        if (!signedIn) {
-          setStatus("denied");
-          return;
-        }
-      }
 
       sync = createNetworkSync({
         sessionId,

@@ -13,10 +13,13 @@
  *
  * This module is the replacement. Design rules it holds to:
  *
- *   - Reads of clinical data are *always* authorised. A session code alone is
- *     not a credential: a leaked QR or a guessed bed label must not yield vitals.
- *     Either a staff account with assignment to the patient, or the console
- *     token that was minted for that specific session.
+ *   - Reads of clinical data are *always* authorised. Possession of the session
+ *     code (the bed's QR / typed ID) is enough to mint a read credential for
+ *     that bed -- login is reserved for clinical ACTIONS and history. The first
+ *     credential is the session's primary token; every other device gets its own
+ *     viewer credential in `console_viewers`, so the bedside console and any
+ *     number of phones can watch the same bed at once. Credentials never cross
+ *     sessions.
  *   - Writes are idempotent on the client's own string id, so the offline
  *     outbox's retry replay collides on a unique key instead of creating a
  *     second clinical record.
@@ -187,11 +190,36 @@ function toSession(row: SessionRow): ConsoleSession {
 }
 
 /**
+ * Mint a second (or third, or Nth) read credential for an existing session.
+ *
+ * ``console_sessions.console_token_hash`` is a single slot: whoever claimed the
+ * bed first (normally the bedside console) owns it, and a second device that
+ * presents the same code used to be refused outright. Every device that scans
+ * the QR or types the code should be able to view the bed without a login, so a
+ * claim on an existing session now mints a fresh viewer credential here instead
+ * of dying on a 409.
+ */
+export async function mintViewerCredential(sessionId: number): Promise<string> {
+  const token = generateToken(32);
+  await query(
+    `INSERT INTO console_viewers (session_id, token_hash) VALUES (?, ?)`,
+    [sessionId, hashToken(token)],
+  );
+  return token;
+}
+
+/**
  * Constant-time check of a console token against the stored hash.
  *
- * The token is the only thing that authorises a read for a non-staff caller, so
+ * The token is the thing that authorises a read for a non-staff caller, so
  * this must not leak length or prefix through timing, and a wrong token must be
  * indistinguishable from a missing one.
+ *
+ * A token verifies if it is either the session's own primary credential or one
+ * of its viewer credentials, so the bedside console and every phone that
+ * scanned its QR can all hold valid credentials for the same bed at once. A
+ * credential never crosses sessions: the hash is looked up against this
+ * session's rows only.
  */
 export async function verifyConsoleToken(code: string, token: string | null): Promise<ConsoleSession | null> {
   if (!token || token.length < 16 || token.length > 128) return null;
@@ -216,19 +244,30 @@ export async function verifyConsoleToken(code: string, token: string | null): Pr
   );
   if (!row) return null;
 
-  // Fetch the hash separately so a session that fails the time check is not
-  // distinguishable from a wrong token by row shape.
+  const actual = Buffer.from(hashToken(token), "hex");
+  const actualLen = actual.length;
+
+  // The session's own primary credential.
   const hashRow = await queryOne<RowDataPacket & { console_token_hash: string }>(
     `SELECT console_token_hash FROM console_sessions WHERE id = ? LIMIT 1`,
     [row.id],
   );
-  if (!hashRow) return null;
+  if (hashRow) {
+    const expected = Buffer.from(String(hashRow.console_token_hash), "hex");
+    if (expected.length === actualLen && constantTimeEqual(expected, actual)) return toSession(row);
+  }
 
-  const expected = Buffer.from(String(hashRow.console_token_hash), "hex");
-  const actual = Buffer.from(hashToken(token), "hex");
-  if (expected.length !== actual.length || !constantTimeEqual(expected, actual)) return null;
+  // Every viewer credential this session minted for other devices.
+  const viewers = await query<RowDataPacket>(
+    `SELECT token_hash FROM console_viewers WHERE session_id = ?`,
+    [row.id],
+  );
+  for (const v of viewers) {
+    const expected = Buffer.from(String(v.token_hash), "hex");
+    if (expected.length === actualLen && constantTimeEqual(expected, actual)) return toSession(row);
+  }
 
-  return toSession(row);
+  return null;
 }
 
 /**

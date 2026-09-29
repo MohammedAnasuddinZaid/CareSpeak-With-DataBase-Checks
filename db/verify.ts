@@ -25,6 +25,8 @@ const EXPECTED_TABLES = [
   "patient_profiles", "staff_profiles", "users", "vitals", "wards", "consents",
   // Added by migrations 003-005.
   "schema_migrations", "session_metrics",
+  // Added by migration 006: per-session viewer credentials for multi-viewer beds.
+  "console_viewers",
 ];
 
 let failures = 0;

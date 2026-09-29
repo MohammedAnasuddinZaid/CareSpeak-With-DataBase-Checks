@@ -131,20 +131,17 @@ export interface ClaimResult {
 }
 
 /**
- * Ask the server to provision this browser as the console for `sessionId`.
+ * Ask the server to provision this browser as a viewer of `sessionId`.
  *
- * The session code in the bed's QR is a public handle; the credential that
- * actually authorises reads is a separate token the server sets as an HttpOnly
- * cookie. Because it is HttpOnly, nothing in this file ever sees it — there is no
- * token in localStorage to leak through an XSS bug, and no client code that
- * could forget to attach it.
+ * Scanning the bed's QR or typing the session code is enough to view the bed:
+ * no sign-in required. The server mints a read credential per device and sets it
+ * as an HttpOnly cookie. Because it is HttpOnly, nothing in this file ever sees
+ * it �?" there is no token in localStorage to leak through an XSS bug, and no
+ * client code that could forget to attach it.
  *
- * Safe to call on every mount: the server only mints a token for a session that
- * does not exist yet, and a repeat call from a browser that already holds the
- * valid token is a no-op. A `409` means "this bed belongs to a different
- * browser". An anonymised 409 cannot be clicked past, but a signed-in staff
- * member assigned to that bed is rotated onto it in the same request — so the
- * nurse-view passes that through rather than treating every denial as the end.
+ * Safe to call on every mount: a repeat call from a browser that already holds
+ * a valid token for the session is a no-op, and a second device claiming the
+ * same code gets its own credential instead of being locked out.
  */
 export async function claimConsoleToken(sessionId: string): Promise<ClaimResult> {
   if (typeof window === "undefined") return { state: "idle", deniedReason: null };
@@ -160,8 +157,6 @@ export async function claimConsoleToken(sessionId: string): Promise<ClaimResult>
       return { state: "granted", deniedReason: null, rotated: body?.rotated };
     }
     if (res.status === 409 || res.status === 403) {
-      // 403 arrives with `reason` already decided by the server; a 409 without
-      // a rotation path means the caller was not signed in as assigned staff.
       return { state: "denied", deniedReason: res.status === 403 ? "forbidden" : "unauthenticated" };
     }
     return { state: "error", deniedReason: null };

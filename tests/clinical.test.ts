@@ -23,18 +23,18 @@ import { loadDotEnv } from "../src/lib/server/env";
 
 loadDotEnv();
 
-const { getOrCreateSession, verifyConsoleToken, touchSession } = await import(
+const { getOrCreateSession, verifyConsoleToken, touchSession, mintViewerCredential } = await import(
   "../src/lib/server/clinical"
 );
 const { execute, queryOne, closePool } = await import("../src/lib/server/db");
 const { hashToken } = await import("../src/lib/server/crypto");
 
 /**
- * The console credential is the only thing standing between a photographed QR
- * code and a patient's vitals, and every one of these behaviours is enforced in
- * SQL. A mocked database would agree with a wrong query, so these run against
- * the real schema under a reserved session-code prefix and clean up after
- * themselves.
+ * The console credential is what a scanned QR actually turns into: possession of
+ * the code lets a device mint its own read credential for that bed. These tests
+ * pin that behaviour in SQL -- a mocked database would agree with a wrong query,
+ * so they run against the real schema under a reserved session-code prefix and
+ * clean up after themselves.
  */
 const PREFIX = "TST";
 
@@ -121,6 +121,29 @@ describe("console credential issuance", () => {
       [c],
     );
     expect(Number(rows!.n)).toBe(1);
+  });
+
+  it("lets a second device mint its own viewer credential for the same bed", async () => {
+    const c = await newSession();
+    const first = await getOrCreateSession(c);
+    expect(first.created).toBe(true);
+
+    // A nurse scanning the QR after the bedside console claimed the bed. Under
+    // the old single-token model this was a 409 dead end; now it mints a fresh
+    // viewer credential that verifies against the SAME session.
+    const viewer = await mintViewerCredential(first.session.id);
+    expect(viewer.length).toBeGreaterThanOrEqual(16);
+
+    const verified = await verifyConsoleToken(c, viewer);
+    expect(verified).not.toBeNull();
+    expect(verified?.id).toBe(first.session.id);
+
+    // The bedside console's original credential still works alongside it.
+    expect(await verifyConsoleToken(c, first.token!)).not.toBeNull();
+
+    // The viewer credential authorises only THIS session, not another bed.
+    const other = await getOrCreateSession(await newSession());
+    expect(await verifyConsoleToken(other.session.code, viewer)).toBeNull();
   });
 });
 
