@@ -1,9 +1,24 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getOrCreateSession, mintViewerCredential, normalizeCode, verifyConsoleToken } from "@/lib/server/clinical";
+import { env } from "@/lib/server/env";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+/**
+ * `Secure` is decided by the origin the app actually serves over, not by
+ * `NODE_ENV`. A production build (npm start) served over LAN HTTP is the common
+ * demo path here -- phones scan a QR that points at `http://192.168.x.x:3000`.
+ * If the flag were `NODE_ENV === "production"` the phone browser would silently
+ * reject the cookie over plain HTTP, and every subsequent /api/sync and
+ * /api/stream request would arrive without the console credential and 401 in an
+ * endless reconnect loop. Match the auth cookies: Secure only when the app is
+ * truly served over HTTPS.
+ */
+const COOKIE_SECURE = env.appOrigin.startsWith("https://");
+const COOKIE_SAME_SITE = "lax" as const;
+const COOKIE_MAX_AGE = 12 * 60 * 60;
 
 /**
  * Console credential claim.
@@ -59,20 +74,20 @@ export async function POST(request: Request): Promise<NextResponse> {
     const fresh = await mintViewerCredential(session.id);
     jar.set("cs_console", fresh, {
       httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      sameSite: COOKIE_SAME_SITE,
+      secure: COOKIE_SECURE,
       path: "/",
-      maxAge: 12 * 60 * 60,
+      maxAge: COOKIE_MAX_AGE,
     });
     return NextResponse.json({ ok: true, session, id: session.id, issued: true, rotated: false });
   }
 
   jar.set("cs_console", token, {
     httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: COOKIE_SAME_SITE,
+    secure: COOKIE_SECURE,
     path: "/",
-    maxAge: 12 * 60 * 60,
+    maxAge: COOKIE_MAX_AGE,
   });
 
   return NextResponse.json({ ok: true, session, id: session.id, issued: true });
