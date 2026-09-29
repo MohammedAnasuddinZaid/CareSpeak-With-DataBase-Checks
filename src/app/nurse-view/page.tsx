@@ -138,9 +138,15 @@ export default function NurseViewPage() {
     return () => clearInterval(timer);
   }, []);
 
-  /* ── one-shot history backfill: a nurse joining mid-shift sees prior events ── */
+  /* ── one-shot history backfill: a nurse joining mid-shift sees prior events ──
+     Gated on `claim === "granted"`, not merely on `paired`. `paired` flips as
+     soon as the URL param is read, which is BEFORE the claim handshake has set
+     the console cookie, so firing here on `paired` raced the claim and produced
+     a guaranteed 401 on every cold load. `useLiveSync` already reconciles
+     history for the session it claims, so this only has to cover the case where
+     it is granted after the stream is already live. */
   useEffect(() => {
-    if (!paired || !sessionInput) return;
+    if (claim !== "granted" || !sessionInput) return;
     let cancelled = false;
     fetch(`/api/sync?session=${encodeURIComponent(sessionInput)}&since=0`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
@@ -159,7 +165,7 @@ export default function NurseViewPage() {
     return () => {
       cancelled = true;
     };
-  }, [paired, sessionInput]);
+  }, [claim, sessionInput]);
 
   /* ── automatic escalation engine (implements ESCALATION_RULES for real) ── */
   const primaryMetrics = useMemo(

@@ -150,6 +150,33 @@ async function insertSession(code: string, token: string, label?: string): Promi
 }
 
 /**
+ * Is this session currently readable at all?
+ *
+ * The same predicate `verifyConsoleToken` enforces, exposed on its own so the
+ * claim handshake can ask it BEFORE minting a credential. Expiry and status are
+ * deliberately evaluated in SQL against NOW(3) for the timezone reason documented
+ * on `verifyConsoleToken`.
+ *
+ * Without this, claiming an ended or expired bed minted a viewer credential,
+ * set it as the cookie, and answered 200 — so the console reported a successful
+ * pairing, opened its stream, and then had every single read refused with a 401
+ * it had no way to interpret. The client sat in its "Reconnecting…" state
+ * forever, retrying a link that could never come up, because the one response
+ * that would have told it to stop (the claim) claimed success. A pairing that
+ * cannot be read must be refused at the door.
+ */
+export async function isSessionReadable(sessionId: number): Promise<boolean> {
+  const row = await queryOne<RowDataPacket & { readable: number }>(
+    `SELECT (status = 'active' AND expires_at > NOW(3)) AS readable
+       FROM console_sessions
+      WHERE id = ?
+      LIMIT 1`,
+    [sessionId],
+  );
+  return Number(row?.readable ?? 0) === 1;
+}
+
+/**
  * Bind a session to an admitted patient by matching its code against active bed
  * labels. Best effort: an unbound session is still usable, it just cannot be
  * authorised against a patient, so a read attempt on it is refused rather than

@@ -334,7 +334,24 @@ export class NetworkSync {
   private async pollOnce(): Promise<void> {
     if (this.destroyed) return;
     try {
-      const session = encodeURIComponent(this.cfg.sessionId ?? "default");      const res = await fetch(`/api/sync?session=${session}&since=${this.cursor}`, { cache: "no-store" });
+      const session = encodeURIComponent(this.cfg.sessionId ?? "default");
+      const res = await fetch(`/api/sync?session=${session}&since=${this.cursor}`, { cache: "no-store" });
+      if (res.status === 401 || res.status === 403) {
+        // The server has refused this credential for this bed, so no amount of
+        // retrying can fix it. Retrying here is what produced the reported
+        // symptom: an endless "Reconnecting…" on a link that could never open,
+        // with the actual reason (the bed session ended / was never provisioned)
+        // never reaching the person staring at the screen. A 401/403 is a
+        // terminal answer, not a blip, so stop and let the UI ask for re-pairing.
+        this.closeSse();
+        this.stopPolling();
+        if (this.retryTimer) {
+          clearTimeout(this.retryTimer);
+          this.retryTimer = null;
+        }
+        this.setStatus("denied", "offline");
+        return;
+      }
       if (!res.ok) throw new Error(String(res.status));
       const data = (await res.json()) as {
         entries: StoredEntry[];

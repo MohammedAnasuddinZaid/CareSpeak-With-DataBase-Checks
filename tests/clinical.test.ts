@@ -23,7 +23,7 @@ import { loadDotEnv } from "../src/lib/server/env";
 
 loadDotEnv();
 
-const { getOrCreateSession, verifyConsoleToken, touchSession, mintViewerCredential } = await import(
+const { getOrCreateSession, verifyConsoleToken, touchSession, mintViewerCredential, isSessionReadable } = await import(
   "../src/lib/server/clinical"
 );
 const { execute, queryOne, closePool } = await import("../src/lib/server/db");
@@ -144,6 +144,59 @@ describe("console credential issuance", () => {
     // The viewer credential authorises only THIS session, not another bed.
     const other = await getOrCreateSession(await newSession());
     expect(await verifyConsoleToken(other.session.code, viewer)).toBeNull();
+  });
+});
+
+describe("isSessionReadable", () => {
+  it("accepts a freshly minted, active session", async () => {
+    const c = await newSession();
+    const { session } = await getOrCreateSession(c);
+    expect(await isSessionReadable(session.id)).toBe(true);
+  });
+
+  it("rejects an expired session", async () => {
+    const c = await newSession();
+    const { session } = await getOrCreateSession(c);
+    await execute("UPDATE console_sessions SET expires_at = DATE_SUB(NOW(3), INTERVAL 1 HOUR) WHERE id = ?", [
+      session.id,
+    ]);
+    expect(await isSessionReadable(session.id)).toBe(false);
+  });
+
+  it("rejects a session that was explicitly ended", async () => {
+    const c = await newSession();
+    const { session } = await getOrCreateSession(c);
+    await execute("UPDATE console_sessions SET status = 'ended' WHERE id = ?", [session.id]);
+    expect(await isSessionReadable(session.id)).toBe(false);
+  });
+
+  it("rejects a session id that does not exist", async () => {
+    expect(await isSessionReadable(-1)).toBe(false);
+  });
+
+  /**
+   * The bug this pins. The claim handshake used to fall through to
+   * `mintViewerCredential` for a session that `getOrCreateSession` had found but
+   * which was expired or ended, answering 200 with a cookie for a bed that could
+   * not be read. The console took the success at face value, opened its stream,
+   * and then received nothing but 401s -- so it sat on "Reconnecting..." for the
+   * rest of the shift with no error anywhere to explain it. `isSessionReadable`
+   * is the check that has to run BEFORE any credential is minted.
+   */
+  it("refuses to back a viewer credential for an unreadable session", async () => {
+    const c = await newSession();
+    const { session } = await getOrCreateSession(c);
+    await execute("UPDATE console_sessions SET expires_at = DATE_SUB(NOW(3), INTERVAL 1 HOUR) WHERE id = ?", [
+      session.id,
+    ]);
+
+    // The claim route's guard, exercised on the same state.
+    expect(await isSessionReadable(session.id)).toBe(false);
+
+    // And the token such a session would have been handed still cannot read, so
+    // refusing is the only honest answer.
+    const dead = await mintViewerCredential(session.id);
+    expect(await verifyConsoleToken(c, dead)).toBeNull();
   });
 });
 

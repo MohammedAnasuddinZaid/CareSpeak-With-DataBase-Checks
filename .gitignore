@@ -17,3 +17,7 @@ req-*.json
 .devserver.log
 .devserver.err
 .probe*
+
+# local dev server log
+dev-server.log
+

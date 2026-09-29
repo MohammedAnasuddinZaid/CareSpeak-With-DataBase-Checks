@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { getOrCreateSession, mintViewerCredential, normalizeCode, verifyConsoleToken } from "@/lib/server/clinical";
+import {
+  getOrCreateSession,
+  isSessionReadable,
+  mintViewerCredential,
+  normalizeCode,
+  verifyConsoleToken,
+} from "@/lib/server/clinical";
 import { env } from "@/lib/server/env";
 
 export const dynamic = "force-dynamic";
@@ -66,6 +72,25 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const { session, token, created } = await getOrCreateSession(code);
+
+  // Refuse a bed that can never be read, BEFORE any credential is minted.
+  //
+  // `getOrCreateSession` finds the row for a code whether or not it is still
+  // live, so for an ended or expired session it returns that dead row with
+  // `token: null` and `created: false`. Falling straight through to
+  // `mintViewerCredential` there produced the worst possible failure: a 200 with
+  // a fresh cookie for a session whose every read is refused with 401. The
+  // console believed it had paired, opened /api/stream, and then had nothing but
+  // 401s to show for it -- so it sat on "Reconnecting…" for the rest of the
+  // shift, retrying a link that was never going to open, with no error anywhere
+  // to explain why. Re-pairing the live bed (which mints a new code) is the only
+  // way out, so that is what the response now says.
+  if (!(await isSessionReadable(session.id))) {
+    return NextResponse.json(
+      { ok: false, error: "This bed session has ended. Scan the current QR code to pair again." },
+      { status: 403 },
+    );
+  }
 
   if (!created || !token) {
     // The session is already claimed by another device (usually the bedside
