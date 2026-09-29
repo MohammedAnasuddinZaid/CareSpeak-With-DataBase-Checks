@@ -42,6 +42,10 @@ export interface LiveSyncApi {
    * then sat in a reconnect loop the patient could do nothing about.
    */
   claim: ClaimState;
+  /** Why a claim was denied: staff take-over forbidden vs anonymous 409. */
+  claimDeniedReason: "unauthenticated" | "forbidden" | null;
+  /** True when the server rotated the console token on us (staff take-over). */
+  claimRotated?: boolean;
   sendAlert: (entry: GestureLogEntry) => void;
   sendAction: (action: import("@/types").AlertAction) => void;
   sendReply: (text: string, from?: string) => void;
@@ -62,6 +66,8 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
   const [vitals, setVitals] = useState<Record<string, DeviceVitals>>({});
   const [latestReply, setLatestReply] = useState<NurseReply | null>(null);
   const [claim, setClaim] = useState<ClaimState>("idle");
+  const [claimDeniedReason, setClaimDeniedReason] = useState<"unauthenticated" | "forbidden" | null>(null);
+  const [claimRotated, setClaimRotated] = useState(false);
 
   useEffect(() => {
     if (!enabled) {
@@ -88,13 +94,18 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
     // re-pairing state.
     (async () => {
       setClaim("claiming");
-      const state = await claimConsoleToken(sessionId ?? "default");
+      const result = await claimConsoleToken(sessionId ?? "default");
       if (cancelled) return;
-      setClaim(state);
+      setClaim(result.state);
+      setClaimDeniedReason(result.deniedReason);
+      setClaimRotated(Boolean(result.rotated));
 
-      if (state === "denied" || state === "error") {
+      if (result.state === "denied" || result.state === "error") {
         const signedIn = await hasStaffSession();
         if (cancelled) return;
+        // A signed-in staff member may proceed on an assignment even without a
+        // console credential (the sync API authorises by their own session).
+        // But an anonymous denial is terminal: connecting would loop on 401.
         if (!signedIn) {
           setStatus("denied");
           return;
@@ -160,5 +171,5 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
     []
   );
 
-  return { syncRef, status, transport, driver, remoteMetrics, vitals, latestReply, claim, sendAlert, sendAction, sendReply, sendPatientMetrics };
+  return { syncRef, status, transport, driver, remoteMetrics, vitals, latestReply, claim, claimDeniedReason, claimRotated, sendAlert, sendAction, sendReply, sendPatientMetrics };
 }

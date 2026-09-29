@@ -97,7 +97,7 @@ export default function NurseViewPage() {
     setUnseenMsgs((n) => n + 1);
   }, []);
 
-  const { status, transport, driver, remoteMetrics, vitals, sendAction, sendReply, syncRef } = useLiveSync({
+  const { status, transport, driver, remoteMetrics, vitals, claim, claimDeniedReason, claimRotated, sendAction, sendReply, syncRef } = useLiveSync({
     sessionId: sessionInput,
     enabled: paired,
     onAlert: handleAlert,
@@ -494,7 +494,9 @@ export default function NurseViewPage() {
       : status === "reconnecting"
       ? "Reconnecting..."
       : status === "denied"
-      ? "Not paired — re-pair this bed"
+      ? claimRotated
+        ? "Paired · take-over in progress"
+        : "Not paired — this bed is already linked"
       : "Disconnected";
 
   return (
@@ -551,11 +553,11 @@ export default function NurseViewPage() {
               <input
                 type="text"
                 value={sessionInput}
-                onChange={(e) => setSessionInput(e.target.value.toUpperCase().slice(0, 12))}
-                placeholder="Enter Session ID (e.g., ABC123)"
+                onChange={(e) => setSessionInput(e.target.value.toUpperCase())}
+                placeholder="Enter Session ID (from the patient's device)"
                 aria-label="Session ID"
                 className="input flex-1 font-mono tracking-widest uppercase"
-                maxLength={12}
+                maxLength={32}
               />
               <button
                 onClick={() => {
@@ -611,6 +613,37 @@ export default function NurseViewPage() {
               Switch
             </button>
           </div>
+        )}
+
+        {/* ── recovery panel: a claim denial that a nurse is not incorrectly
+             told to "re-pair" themselves. The QR is a public handle; a seed or
+             second scan cannot mint a new credential anonymously, and the UI
+             must say so and route to the correct remedy (staff sign-in) rather
+             than looping the user back into the same dead 409. ── */}
+        {paired && claim === "denied" && !claimRotated && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-8 p-5 rounded-2xl bg-[#c63a22]/5 border border-[#c63a22]/15"
+          >
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-[#c63a22] mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <h3 className="font-semibold text-[#1f1f1f] text-sm">Bed already linked to another console</h3>
+                <p className="text-xs text-[#6e6e6e] mt-1">
+                  {claimDeniedReason === "forbidden"
+                    ? "You are signed in but not assigned to this bed, so the take-over was refused."
+                    : "The QR code alone is not a credential. Sign in as a nurse assigned to this bed to take over this console."}
+                </p>
+                <a
+                  href={`/login?next=${encodeURIComponent(`/nurse-view?session=${encodeURIComponent(sessionInput)}`)}`}
+                  className="inline-flex items-center gap-2 mt-3 px-4 py-2 rounded-xl bg-[#c63a22] hover:bg-[#a92f19] text-white text-xs font-medium transition-colors"
+                >
+                  Sign in as staff to take over
+                </a>
+              </div>
+            </div>
+          </motion.div>
         )}
 
         {/* ── stat cards ── */}

@@ -122,6 +122,14 @@ export function getNurseDashboardUrl(sessionId: string): string {
 
 export type ClaimState = "idle" | "claiming" | "granted" | "denied" | "error";
 
+export interface ClaimResult {
+  state: ClaimState;
+  /** 403 (staff, not assigned) vs 409 (anonymous). */
+  deniedReason: "unauthenticated" | "forbidden" | null;
+  /** Server rotated the console token for us (staff take-over). */
+  rotated?: boolean;
+}
+
 /**
  * Ask the server to provision this browser as the console for `sessionId`.
  *
@@ -133,12 +141,13 @@ export type ClaimState = "idle" | "claiming" | "granted" | "denied" | "error";
  *
  * Safe to call on every mount: the server only mints a token for a session that
  * does not exist yet, and a repeat call from a browser that already holds the
- * valid token is a no-op. The `409` therefore means "this bed belongs to a
- * different browser", which is a re-pairing problem for staff to solve — not
- * something a patient can click past.
+ * valid token is a no-op. A `409` means "this bed belongs to a different
+ * browser". An anonymised 409 cannot be clicked past, but a signed-in staff
+ * member assigned to that bed is rotated onto it in the same request — so the
+ * nurse-view passes that through rather than treating every denial as the end.
  */
-export async function claimConsoleToken(sessionId: string): Promise<ClaimState> {
-  if (typeof window === "undefined") return "idle";
+export async function claimConsoleToken(sessionId: string): Promise<ClaimResult> {
+  if (typeof window === "undefined") return { state: "idle", deniedReason: null };
   try {
     const res = await fetch("/api/console/claim", {
       method: "POST",
@@ -146,11 +155,18 @@ export async function claimConsoleToken(sessionId: string): Promise<ClaimState> 
       body: JSON.stringify({ session: sessionId }),
       cache: "no-store",
     });
-    if (res.ok) return "granted";
-    if (res.status === 409 || res.status === 403) return "denied";
-    return "error";
+    if (res.ok) {
+      const body = (await res.json().catch(() => null)) as { rotated?: boolean } | null;
+      return { state: "granted", deniedReason: null, rotated: body?.rotated };
+    }
+    if (res.status === 409 || res.status === 403) {
+      // 403 arrives with `reason` already decided by the server; a 409 without
+      // a rotation path means the caller was not signed in as assigned staff.
+      return { state: "denied", deniedReason: res.status === 403 ? "forbidden" : "unauthenticated" };
+    }
+    return { state: "error", deniedReason: null };
   } catch {
-    return "error";
+    return { state: "error", deniedReason: null };
   }
 }
 

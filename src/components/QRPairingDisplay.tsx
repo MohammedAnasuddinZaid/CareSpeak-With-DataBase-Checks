@@ -60,14 +60,16 @@ function useAutoLanOrigin(enabled: boolean): { autoOrigin: string | null; probin
         const candidates = (data.lan ?? []).slice(0, 4).map(
           (n) => `http://${n.address}${port ? `:${port}` : ""}`
         );
-        for (const candidate of candidates) {
-          if (cancelled) return;
-          if (await probeReachable(candidate)) {
-            if (cancelled) return;
-            setDashboardOrigin(candidate); // persists; QR effect reacts to origin change
-            setAutoOrigin(candidate);
-            break;
-          }
+        // Probe every candidate in parallel instead of serially: four LAN
+        // addresses at 1.8s each previously made the QR stall up to ~7s even
+        // though the first host answered in <50ms.
+        const results = await Promise.all(
+          candidates.map(async (candidate) => ({ candidate, ok: await probeReachable(candidate) }))
+        );
+        const winner = results.find((r) => r.ok && !cancelled);
+        if (winner && !cancelled) {
+          setDashboardOrigin(winner.candidate); // persists; QR effect reacts to origin change
+          setAutoOrigin(winner.candidate);
         }
       } catch {
         // Server unreachable for discovery — manual editor stays available.
