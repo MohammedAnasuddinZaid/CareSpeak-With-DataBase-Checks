@@ -89,6 +89,14 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
     setVitals({});
     setLatestReply(null);
 
+    // A connect attempt is now in flight. Until this branch ran, `!enabled`
+    // had left the status at "disconnected"; without this reset, the badge
+    // stayed RED "Disconnected" for the entire claim + stream-open handshake
+    // (several seconds on a phone QR scan, ~8.5s of it a cold /api/stream
+    // compile), reading as a dead link on links that were merely warming up.
+    setStatus("reconnecting");
+    setTransport("none");
+
     let cancelled = false;
     let sync: NetworkSync | null = null;
 
