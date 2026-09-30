@@ -8,6 +8,7 @@ import {
   ArrowRight,
   BedDouble,
   CheckCircle,
+  ClipboardList,
   Clock,
   Gauge,
   RefreshCw,
@@ -23,6 +24,7 @@ import {
   type BottleneckNote,
   type BottleneckReport,
 } from "@/lib/bottlenecks";
+import type { ShiftPoint } from "@/lib/operations";
 
 type NoteSeverity = BottleneckNote["severity"];
 
@@ -59,6 +61,7 @@ interface WardInsightPayload {
   occupancy: { activeSessions: number; stalledBeds: number };
   overall: BottleneckReport;
   perSession: WardBedPayload[];
+  shiftTrend: ShiftPoint[];
 }
 
 async function fetchJson<T>(url: string): Promise<{ status: number; body: T | null }> {
@@ -149,6 +152,43 @@ function HourBars({ report }: { report: BottleneckReport }) {
           />
         </div>
       ))}
+    </div>
+  );
+}
+
+function ShiftTrend({ points }: { points: ShiftPoint[] }) {
+  if (points.length === 0) {
+    return <div className="text-sm text-[#6e6e6e]">No acknowledged requests in the last 7 days to plot by shift yet.</div>;
+  }
+  const max = Math.max(1, ...points.map((p) => p.medianMs ?? 0));
+  return (
+    <div className="space-y-2">
+      {points.map((p) => {
+        const worse = p.changePct !== null && p.changePct > 0;
+        return (
+          <div key={p.startMs} className="flex items-center gap-3">
+            <div className="w-28 shrink-0 text-xs text-[#6e6e6e]">
+              {p.day} · {p.slot}
+            </div>
+            <div className="flex-1 h-3 rounded-full bg-[#f3f3f3] overflow-hidden">
+              <div
+                className="h-full rounded-full bg-[#c63a22] transition-all duration-500"
+                style={{ width: `${((p.medianMs ?? 0) / max) * 100}%` }}
+              />
+            </div>
+            <div className="w-20 shrink-0 text-right text-sm font-bold text-[#1f1f1f]">{fmtMs(p.medianMs)}</div>
+            <div className="w-14 shrink-0 text-right text-xs">
+              {p.changePct === null ? (
+                <span className="text-[#b0b0b0]">—</span>
+              ) : worse ? (
+                <span className="text-[#d92d20]">▲ {Math.round(p.changePct)}%</span>
+              ) : (
+                <span className="text-[#15803d]">▼ {Math.round(-p.changePct)}%</span>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -349,6 +389,9 @@ export default function InsightsPage() {
             <button onClick={showWard} className="btn-secondary px-4 py-2.5 text-sm flex items-center gap-2">
               <Zap className="w-4 h-4" /> Ward-wide
             </button>
+            <a href="/operations" className="btn-secondary px-4 py-2.5 text-sm flex items-center gap-2">
+              <ClipboardList className="w-4 h-4" /> Operations
+            </a>
             {mode === "session" && (
               <button onClick={() => activeCode && void loadSession(activeCode)} className="btn-primary px-4 py-2.5 text-sm flex items-center gap-2">
                 <RefreshCw className="w-4 h-4" /> Refresh
@@ -423,6 +466,16 @@ export default function InsightsPage() {
               <Kpi label="Median time-to-ack" value={fmtMs(ward.overall.ack.medianMs)} sub={`${ward.overall.funnel.acknowledged} acked`} />
             </div>
             <ReportCards report={ward.overall} />
+
+            {ward.shiftTrend.length > 0 && (
+              <div className="card p-5 border border-[#e6e6e6] mt-4">
+                <div className="flex items-center gap-2 text-sm font-bold text-[#1f1f1f] mb-4">
+                  <TrendingUp className="w-4 h-4 text-[#c63a22]" /> Time-to-ack by shift · last 7 days
+                </div>
+                <div className="mb-2 text-xs text-[#6e6e6e]">Median time-to-ack per 8-hour shift; ▲ means the ward slowed down, ▼ means it got faster.</div>
+                <ShiftTrend points={ward.shiftTrend} />
+              </div>
+            )}
 
             {ward.perSession.length > 0 && (
               <div className="card p-5 border border-[#e6e6e6] mt-4 overflow-x-auto">

@@ -10,6 +10,8 @@ import {
   STALLED_BED_MS,
 } from "@/lib/bottlenecks";
 import type { AuthUser } from "./auth";
+import { shiftTrend } from "@/lib/operations";
+import type { ShiftPoint } from "@/lib/operations";
 
 /**
  * PNH1 care-flow analysis on top of the persisted gesture lifecycle.
@@ -68,6 +70,7 @@ export interface WardInsight {
   occupancy: { activeSessions: number; stalledBeds: number };
   overall: BottleneckReport;
   perSession: WardBedInsight[];
+  shiftTrend: ShiftPoint[];
 }
 
 interface WardFeedRow extends RowDataPacket {
@@ -209,5 +212,6 @@ export async function wardInsight(user: AuthUser): Promise<WardInsight> {
     },
     overall: buildBottleneckReport(allSamples, now),
     perSession,
+    shiftTrend: shiftTrend(allSamples, now, 7),
   };
 }

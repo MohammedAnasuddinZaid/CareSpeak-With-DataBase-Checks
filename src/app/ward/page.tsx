@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { BedDouble, RefreshCw, Activity, ArrowRight, ArrowUpRight, HeartPulse, Search, ShieldAlert, Siren, Smartphone } from "lucide-react";
+import { BedDouble, RefreshCw, Activity, ArrowRight, ArrowUpRight, ClipboardList, HeartPulse, Search, ShieldAlert, Siren, Smartphone } from "lucide-react";
 import { formatRelativeTime } from "@/components/uiConstants";
 import { playAlertSound } from "@/lib/alertSounds";
 import { isAlarmMuted } from "@/lib/nurseAlarm";
@@ -150,6 +150,9 @@ export default function WardPage() {
           <div className="flex items-center gap-2">
             <a href="/insights" className="btn-secondary px-4 py-2.5 text-sm flex items-center gap-2">
               <Activity className="w-4 h-4" /> Care Flow
+            </a>
+            <a href="/operations" className="btn-secondary px-4 py-2.5 text-sm flex items-center gap-2">
+              <ClipboardList className="w-4 h-4" /> Operations
             </a>
             <button onClick={() => void load()} className="btn-secondary px-4 py-2.5 text-sm flex items-center gap-2">
               <RefreshCw className="w-4 h-4" /> Refresh
