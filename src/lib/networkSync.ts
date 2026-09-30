@@ -16,7 +16,20 @@ import {
 const BROADCAST_CHANNEL = "carespeak_sync";
 const POLL_INTERVAL_MS = 1500;
 const MAX_POLL_INTERVAL_MS = 15000;
-const SSE_GRACE_MS = 6000;
+/**
+ * How long an SSE connection may stay silent before it is demoted to polling.
+ *
+ * This must be generous enough to cover a *cold* first request: a fresh
+ * Next.js dev compile of /api/stream measured ~8.5s on this workload, and a
+ * phone over Wi-Fi adds its own stall. A 6s grace killed the stream before it
+ * ever opened and dropped the client to a "Disconnected" state on links that
+ * were actually fine. A genuinely dead link still degrades — just not from a
+ * slow first byte.
+ */
+const SSE_GRACE_MS = 15000;
+/** Upper bound for a single /api/sync poll so a wedged request cannot freeze
+ *  the poll scheduler (which only re-arms inside pollOnce's .then). */
+const POLL_TIMEOUT_MS = 20000;
 /** While SSE is connected we still reconcile via REST every 2s. Critical on
  *  serverless (Vercel): /api/stream and /api/sync may run on different lambda
  *  instances, so SSE alone can miss writes unless Upstash Redis is configured. */
@@ -208,6 +221,9 @@ export class NetworkSync {
       es.addEventListener("error", () => {
         // EventSource retries internally; give it a short grace period,
         // then degrade to polling so rural/2G networks still work.
+        // The label is always "reconnecting" here: an error while the link was
+        // still "disconnected" means a connection attempt is IN FLIGHT, which a
+        // red "Disconnected" badge would present as a permanent failure.
         if (this.graceTimer) clearTimeout(this.graceTimer);
         this.graceTimer = setTimeout(() => {
           if (this.transport === "sse" && this.status !== "connected") {
@@ -215,7 +231,7 @@ export class NetworkSync {
             this.startPolling();
           }
         }, SSE_GRACE_MS);
-        this.setStatus(this.status === "disconnected" ? "disconnected" : "reconnecting", this.transport === "poll" ? "poll" : "sse");
+        this.setStatus("reconnecting", this.transport === "poll" ? "poll" : "sse");
       });
     } catch {
       this.startPolling();
@@ -333,9 +349,14 @@ export class NetworkSync {
 
   private async pollOnce(): Promise<void> {
     if (this.destroyed) return;
+    const session = encodeURIComponent(this.cfg.sessionId ?? "default");
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), POLL_TIMEOUT_MS);
     try {
-      const session = encodeURIComponent(this.cfg.sessionId ?? "default");
-      const res = await fetch(`/api/sync?session=${session}&since=${this.cursor}`, { cache: "no-store" });
+      const res = await fetch(`/api/sync?session=${session}&since=${this.cursor}`, {
+        cache: "no-store",
+        signal: ac.signal,
+      });
       if (res.status === 401 || res.status === 403) {
         // The server has refused this credential for this bed, so no amount of
         // retrying can fix it. Retrying here is what produced the reported
@@ -387,12 +408,23 @@ export class NetworkSync {
         this.es ? "sse" : this.failures > 3 ? "offline" : "poll"
       );
       this.schedulePoll();
+    } finally {
+      clearTimeout(timer);
     }
   }
 
   /* ── outbound ──────────────────────────────────────────── */
 
-  async post(body: unknown): Promise<boolean> {
+  /**
+   * POST to /api/sync.
+   *
+   * Returns `permanent: true` for a 4xx rejection. A 400/401/403/404 is the
+   * server saying THIS payload (or credential) can never succeed — queueing it
+   * for retry would poison the outbox with a message that fails forever, and
+   * head-of-line blocking would stall every later, valid message behind it.
+   * Only transient failures (network, 5xx) belong in the durable outbox.
+   */
+  async post(body: unknown): Promise<{ ok: boolean; permanent: boolean }> {
     try {
       const res = await fetch("/api/sync", {
         method: "POST",
@@ -400,18 +432,21 @@ export class NetworkSync {
         body: JSON.stringify(body),
         cache: "no-store",
       });
-      return res.ok;
+      if (!res.ok && res.status >= 400 && res.status < 500) {
+        return { ok: false, permanent: true };
+      }
+      return { ok: res.ok, permanent: false };
     } catch {
-      return false;
+      return { ok: false, permanent: false };
     }
   }
 
   /** Send a gesture alert. Queues durably when offline. */
   async sendAlert(entry: GestureLogEntry): Promise<void> {
     const body = { type: "new_gesture", entry: { ...entry, sessionId: undefined }, sessionId: this.cfg.sessionId };
-    const ok = await this.post(body);
-    if (!ok) await enqueue({ channel: "alert", body: { type: "new_gesture", entry: { ...entry } } });
-    else void this.flushOutbox();
+    const { ok, permanent } = await this.post(body);
+    if (!ok && !permanent) await enqueue({ channel: "alert", body: { type: "new_gesture", entry: { ...entry } } });
+    else if (ok) void this.flushOutbox();
     this.broadcast({ kind: "new_gesture", entry, sessionId: this.cfg.sessionId });
   }
 
@@ -422,8 +457,8 @@ export class NetworkSync {
       action,
       sessionId: this.cfg.sessionId,
     };
-    const ok = await this.post(body);
-    if (!ok) await enqueue({ channel: "action", body: { type: action.type, entryId: action.entryId, action } });
+    const { ok, permanent } = await this.post(body);
+    if (!ok && !permanent) await enqueue({ channel: "action", body: { type: action.type, entryId: action.entryId, action } });
     this.broadcast({ kind: "action", action, sessionId: this.cfg.sessionId });
   }
 
@@ -446,8 +481,10 @@ export class NetworkSync {
     const items = await dequeueAll();
     for (const item of items) {
       const payload: OutboxPayload = item.payload;
-      const ok = await this.post(payload.body);
-      if (ok) await removeOutboxItem(item.key);
+      const { ok, permanent } = await this.post(payload.body);
+      // Drop both delivered and permanently-rejected messages. Keeping a
+      // permanent 4xx would head-of-line-block everything behind it forever.
+      if (ok || permanent) await removeOutboxItem(item.key);
       else break; // still offline — retry on next trigger
     }
   }

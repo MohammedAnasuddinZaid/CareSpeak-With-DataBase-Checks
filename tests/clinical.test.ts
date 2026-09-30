@@ -23,7 +23,7 @@ import { loadDotEnv } from "../src/lib/server/env";
 
 loadDotEnv();
 
-const { getOrCreateSession, verifyConsoleToken, touchSession, mintViewerCredential, isSessionReadable } = await import(
+const { getOrCreateSession, verifyConsoleToken, touchSession, mintViewerCredential, isSessionReadable, setVitals } = await import(
   "../src/lib/server/clinical"
 );
 const { execute, queryOne, closePool } = await import("../src/lib/server/db");
@@ -279,6 +279,46 @@ describe("touchSession", () => {
     // link at 19:00 regardless of use. It must now be pushed back out.
     expect(Number(after!.minutes)).toBeGreaterThan(Number(before!.minutes));
     expect(after!.minutes).toBeGreaterThan(11 * 60);
+  });
+});
+
+describe("vitals persistence", () => {
+  it("stores each vital in its own column, keyed by the device label", async () => {
+    const c = await newSession();
+    const { session } = await getOrCreateSession(c);
+
+    await setVitals(session, {
+      deviceId: "esp32_ward4_bed12",
+      heartRate: 78,
+      spo2: 97,
+      temperature: 36.8,
+      batteryPct: 85,
+      rssi: -67,
+      sosActive: true,
+      receivedAt: Date.now(),
+    });
+
+    const row = await queryOne<RowDataPacket>(
+      `SELECT device_id, heart_rate, spo2, temperature, battery_pct, rssi, sos_active, recorded_at
+         FROM vitals
+        WHERE session_id = ?
+        ORDER BY received_at DESC, id DESC
+        LIMIT 1`,
+      [session.id],
+    );
+
+    // The bug this pins: an 11-parameter array fed a 10-placeholder insert whose
+    // columns did not include device_id. Every value shifted one column right --
+    // heart_rate received the device label (coerced to 0), temperature received
+    // the SpO2 (~97), and recorded_at was clocked to the Unix epoch.
+    expect(row!.device_id).toBe("esp32_ward4_bed12");
+    expect(Number(row!.heart_rate)).toBe(78);
+    expect(Number(row!.spo2)).toBe(97);
+    expect(Number(row!.temperature)).toBe(36.8);
+    expect(Number(row!.battery_pct)).toBe(85);
+    expect(Number(row!.rssi)).toBe(-67);
+    expect(Number(row!.sos_active)).toBe(1);
+    expect(new Date(String(row!.recorded_at)).getTime()).toBeGreaterThan(0);
   });
 });
 

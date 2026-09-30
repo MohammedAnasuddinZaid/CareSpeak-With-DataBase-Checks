@@ -59,7 +59,12 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
   const replyCb = useRef(onReply);
   replyCb.current = onReply;
 
-  const [status, setStatus] = useState<ConnStatus>("disconnected");
+  // Start as "reconnecting" (amber) rather than "disconnected" (red): on first
+  // paint the render happens BEFORE the claim handshake and stream open have
+  // had a chance to run, so a red "Disconnected" badge was shown for every
+  // legitimate connect attempt — on a phone this is several seconds and reads
+  // as a dead link when the link is merely warming up.
+  const [status, setStatus] = useState<ConnStatus>("reconnecting");
   const [transport, setTransport] = useState<Transport>("none");
   const [driver, setDriver] = useState<"memory" | "redis" | "mysql" | null>(null);
   const [remoteMetrics, setRemoteMetrics] = useState<Record<string, PatientMetrics>>({});
@@ -71,6 +76,10 @@ export function useLiveSync({ sessionId, enabled = true, onAlert, onReply }: Use
 
   useEffect(() => {
     if (!enabled) {
+      // Not paired: no connection is (or should be) open. "Disconnected" is
+      // honest here, unlike during a live connect attempt above.
+      setStatus("disconnected");
+      setTransport("none");
       syncRef.current = null;
       return;
     }

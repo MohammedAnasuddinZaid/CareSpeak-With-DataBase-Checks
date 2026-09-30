@@ -966,9 +966,9 @@ export async function setVitals(
   const clean = sanitizeVitals(raw);
   await query(
     `INSERT INTO vitals
-       (patient_id, bed_id, session_id, heart_rate, spo2, temperature,
-        battery_pct, rssi, sos_active, recorded_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, NOW(3)))`,
+       (patient_id, bed_id, session_id, device_id, heart_rate, spo2,
+        temperature, battery_pct, rssi, sos_active, recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, NOW(3)))`,
     [
       session.patientId,
       session.bedId,
