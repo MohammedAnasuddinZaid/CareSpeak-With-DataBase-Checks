@@ -535,6 +535,13 @@ export default function NurseViewPage() {
               >
                 {alarmMutedState ? "🔇" : "🔔"}
               </button>
+              <a
+                href={paired && sessionInput ? `/insights?session=${encodeURIComponent(sessionInput)}` : "/insights"}
+                className="btn-secondary flex items-center gap-2 px-4 py-2.5 text-sm"
+              >
+                <Activity className="w-4 h-4" />
+                Care Flow
+              </a>
               <a href="/report" target="_blank" rel="noreferrer" className="btn-secondary flex items-center gap-2 px-4 py-2.5 text-sm">
                 <FileText className="w-4 h-4" />
                 Shift Report

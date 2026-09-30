@@ -147,9 +147,14 @@ export default function WardPage() {
               Live status of every CareSpeak session in this facility — risk-banded and sorted so the nurse walks to the right bed first.
             </p>
           </div>
-          <button onClick={() => void load()} className="btn-secondary px-4 py-2.5 text-sm flex items-center gap-2">
-            <RefreshCw className="w-4 h-4" /> Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <a href="/insights" className="btn-secondary px-4 py-2.5 text-sm flex items-center gap-2">
+              <Activity className="w-4 h-4" /> Care Flow
+            </a>
+            <button onClick={() => void load()} className="btn-secondary px-4 py-2.5 text-sm flex items-center gap-2">
+              <RefreshCw className="w-4 h-4" /> Refresh
+            </button>
+          </div>
         </motion.div>
 
         {/* summary strip doubles as band filters */}
